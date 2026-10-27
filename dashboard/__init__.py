@@ -1,0 +1,1 @@
+"""UQAB dashboard package."""

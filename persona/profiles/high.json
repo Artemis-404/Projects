@@ -1,0 +1,34 @@
+{
+  "id": "high",
+  "version": 1,
+  "source": "static",
+  "description": "High bandwidth: dense slots for media-heavy sessions",
+  "floor_slot_ms": 500,
+  "start_state": "active",
+  "states": [
+    {
+      "name": "active",
+      "record_size": 2048,
+      "slot_ms": 50,
+      "duration_s": [30, 150],
+      "burst": {"every_s": [5, 20], "slots": [10, 40], "slot_ms": 20}
+    },
+    {
+      "name": "light",
+      "record_size": 2048,
+      "slot_ms": 150,
+      "duration_s": [20, 90]
+    },
+    {
+      "name": "idle",
+      "record_size": 1024,
+      "slot_ms": 500,
+      "duration_s": [30, 180]
+    }
+  ],
+  "transitions": {
+    "active": {"active": 0.6, "light": 0.3, "idle": 0.1},
+    "light": {"active": 0.5, "light": 0.3, "idle": 0.2},
+    "idle": {"active": 0.8, "light": 0.2}
+  }
+}

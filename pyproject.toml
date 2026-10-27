@@ -1,0 +1,30 @@
+[project]
+name = "uqab"
+version = "1.0.0"
+description = "UQAB - persona-shaped Tor pluggable transport and browser"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["app", "node_modules", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = "(^app/|^dist/|^node_modules/)"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["pt", "protocol", "cover", "persona", "tunnel", "security", "app_api", "profile", "analysis"]
