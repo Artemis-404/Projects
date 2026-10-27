@@ -503,3 +503,52 @@ def test_replay_jitter_keeps_labels_off_the_grid() -> None:
 
     fixed = replay(timeline, proxy_host="h", proxy_port=1, fetch_fn=FakeFetcher())
     assert [row["duration_s"] for row in fixed.phases] == [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]
+
+
+def test_old_database_gains_the_rate_columns(tmp_path: Path) -> None:
+    """A database from an earlier run is migrated in place (D21 cost columns)."""
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL,
+            configuration TEXT NOT NULL, persona_id TEXT NOT NULL, git_tag TEXT,
+            duration_s REAL NOT NULL DEFAULT 0, real_bytes INTEGER NOT NULL DEFAULT 0,
+            cover_bytes INTEGER NOT NULL DEFAULT 0, overhead REAL NOT NULL DEFAULT 0,
+            notes TEXT
+        );
+        """
+    )
+    legacy.execute(
+        "INSERT INTO runs (run_id, started_at, configuration, persona_id, duration_s,"
+        " real_bytes, cover_bytes, overhead) VALUES ('r1','2026-01-01T00:00:00','C','high',10,100,900,10)"
+    )
+    legacy.commit()
+    legacy.close()
+
+    with db_session(path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+        assert {"wire_bps", "idle_bps"} <= columns
+        existing = connection.execute("SELECT * FROM runs WHERE run_id='r1'").fetchone()
+        assert existing["wire_bps"] == 0 and existing["idle_bps"] == 0
+        record_run(
+            connection,
+            RunRecord(
+                run_id="r2",
+                started_at="2026-01-02T00:00:00",
+                configuration="C",
+                persona_id="high",
+                duration_s=10,
+                real_bytes=100,
+                cover_bytes=900,
+                overhead=10,
+                wire_bps=800.0,
+                idle_bps=640.0,
+            ),
+        )
+        summaries = {row.configuration: row for row in comparison(connection)}
+        assert summaries["C"].wire_bps == 400.0  # mean of the two runs
+        assert summaries["C"].idle_bps == 320.0

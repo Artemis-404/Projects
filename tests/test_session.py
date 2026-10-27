@@ -155,7 +155,15 @@ def test_socks_to_orport_roundtrip_is_shaped(
     run(scenario(), timeout=90)
 
 
-def test_persona_comes_from_socks_arguments(cfg: Config, tls_settings: TLSSettings) -> None:
+def test_persona_is_fixed_for_the_session(cfg: Config, tls_settings: TLSSettings) -> None:
+    """D21: one persona per session, chosen when the tunnel opens.
+
+    The cover tunnel is opened eagerly with the client's persona, so a SOCKS
+    request that asks for another one is carried on the session's persona and the
+    mismatch is logged instead of silently restarting the timetable (rotating
+    personas mid-session would be a fingerprint of its own).
+    """
+
     async def scenario() -> None:
         stack = Stack(cfg, tls_settings)
         await stack.start(persona="low")
@@ -166,7 +174,7 @@ def test_persona_comes_from_socks_arguments(cfg: Config, tls_settings: TLSSettin
             assert stack.client is not None
             stats = read_stats(stack.client.stats_path)
             assert stats is not None
-            assert stats["persona"] == "constant"
+            assert stats["persona"] == "low"
             await caller.close()
         finally:
             await stack.stop()

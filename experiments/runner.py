@@ -262,6 +262,11 @@ def replay(
                     requests=sent,
                 )
             )
+        # An ACTIVE phase lasts at least as long as its load really took: a slow
+        # page must not leak traffic into the IDLE interval that follows it, or
+        # the ground truth would blame cover traffic for a real transfer.
+        if phase.kind == "load":
+            duration = max(duration, clock() - phase_start)
         # ``duration`` is dwell time: the script holds each phase for its full
         # length so ACTIVE and IDLE intervals have the length the labels claim.
         remaining = duration - (clock() - phase_start)

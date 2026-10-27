@@ -167,10 +167,27 @@ def extract_windows(
     return windows
 
 
+#: A window must be at least this pure before it gets a label.  A window that
+#: straddles an ACTIVE/IDLE boundary contains a bit of both and would otherwise be
+#: scored as if it were pure — the classic way to make a cover evaluation look
+#: better or worse than it is.
+MIN_LABEL_PURITY = 0.8
+
+
 def label_for(
-    start: float, end: float, ground_truth: Sequence[GroundTruthWindow]
+    start: float,
+    end: float,
+    ground_truth: Sequence[GroundTruthWindow],
+    min_purity: float = MIN_LABEL_PURITY,
 ) -> str:
-    """Label a window by the ground-truth interval with the largest overlap."""
+    """Label a window by the ground-truth interval that covers most of it.
+
+    Windows that no single interval covers at least ``min_purity`` of are left
+    unlabelled and excluded from training and scoring.
+    """
+    length = end - start
+    if length <= 0:
+        return ""
     best = ""
     best_overlap = 0.0
     for interval in ground_truth:
@@ -178,7 +195,7 @@ def label_for(
         if overlap > best_overlap:
             best_overlap = overlap
             best = interval.label
-    if best_overlap <= 0:
+    if best_overlap <= 0 or best_overlap / length < min_purity:
         return ""
     return best
 

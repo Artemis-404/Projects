@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS runs (
     real_bytes   INTEGER NOT NULL DEFAULT 0,
     cover_bytes  INTEGER NOT NULL DEFAULT 0,
     overhead     REAL NOT NULL DEFAULT 0,
+    wire_bps     REAL NOT NULL DEFAULT 0,
+    idle_bps     REAL NOT NULL DEFAULT 0,
     notes        TEXT
 );
 
@@ -82,6 +84,12 @@ class RunRecord:
     real_bytes: int = 0
     cover_bytes: int = 0
     overhead: float = 0.0
+    #: Wire bytes per second over the whole run (same path as ``windows``).
+    wire_bps: float = 0.0
+    #: Wire bytes per second over windows labelled IDLE.  Zero means the observer
+    #: sees silence whenever the user is not browsing, which is precisely the leak
+    #: persona cover is supposed to remove (D21).
+    idle_bps: float = 0.0
     notes: str = ""
     git_tag: str = ""
 
@@ -96,6 +104,8 @@ class RunRecord:
             "real_bytes": int(self.real_bytes),
             "cover_bytes": int(self.cover_bytes),
             "overhead": float(self.overhead),
+            "wire_bps": float(self.wire_bps),
+            "idle_bps": float(self.idle_bps),
             "notes": self.notes,
         }
 
@@ -109,6 +119,8 @@ class RunSummary:
     loads: int = 0
     p50_ms: float = 0.0
     overhead: float = 0.0
+    wire_bps: float = 0.0
+    idle_bps: float = 0.0
     accuracy: float = 0.0
     f1: float = 0.0
     f1_ci_low: float = 0.0
@@ -122,6 +134,8 @@ class RunSummary:
             "loads": self.loads,
             "p50_ms": round(self.p50_ms, 3),
             "overhead": round(self.overhead, 4),
+            "wire_bps": round(self.wire_bps, 1),
+            "idle_bps": round(self.idle_bps, 1),
             "accuracy": round(self.accuracy, 4),
             "f1": round(self.f1, 4),
             "f1_ci_low": round(self.f1_ci_low, 4),
@@ -138,8 +152,23 @@ def open_db(path: Path | str) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
     connection.executescript(SCHEMA)
+    _migrate(connection)
     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     return connection
+
+
+#: Columns added after the first release; an existing database gains them in place.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("wire_bps", "REAL NOT NULL DEFAULT 0"),
+    ("idle_bps", "REAL NOT NULL DEFAULT 0"),
+)
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()}
+    for name, definition in _ADDED_COLUMNS:
+        if name not in existing:
+            connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
 
 
 @contextmanager
@@ -181,9 +210,11 @@ def record_run(
     connection.execute(
         """
         INSERT INTO runs (run_id, started_at, configuration, persona_id, git_tag,
-                          duration_s, real_bytes, cover_bytes, overhead, notes)
+                          duration_s, real_bytes, cover_bytes, overhead, wire_bps,
+                          idle_bps, notes)
         VALUES (:run_id, :started_at, :configuration, :persona_id, :git_tag,
-                :duration_s, :real_bytes, :cover_bytes, :overhead, :notes)
+                :duration_s, :real_bytes, :cover_bytes, :overhead, :wire_bps,
+                :idle_bps, :notes)
         ON CONFLICT(run_id) DO UPDATE SET
             started_at=excluded.started_at,
             configuration=excluded.configuration,
@@ -193,6 +224,8 @@ def record_run(
             real_bytes=excluded.real_bytes,
             cover_bytes=excluded.cover_bytes,
             overhead=excluded.overhead,
+            wire_bps=excluded.wire_bps,
+            idle_bps=excluded.idle_bps,
             notes=excluded.notes
         """,
         run.to_row(),
@@ -341,12 +374,16 @@ def comparison(connection: sqlite3.Connection) -> list[RunSummary]:
             run_ids,
         ).fetchall()
         overheads = [float(row["overhead"] or 0.0) for row in run_rows if row["overhead"]]
+        wire_rates = [float(row["wire_bps"] or 0.0) for row in run_rows]
+        idle_rates = [float(row["idle_bps"] or 0.0) for row in run_rows]
         summary = RunSummary(
             configuration=config,
             runs=len(run_rows),
             loads=len(latencies),
             p50_ms=latencies[len(latencies) // 2] if latencies else 0.0,
             overhead=(sum(overheads) / len(overheads)) if overheads else 0.0,
+            wire_bps=(sum(wire_rates) / len(wire_rates)) if wire_rates else 0.0,
+            idle_bps=(sum(idle_rates) / len(idle_rates)) if idle_rates else 0.0,
         )
         if score_rows:
             summary.accuracy = sum(r["accuracy"] for r in score_rows) / len(score_rows)
@@ -372,7 +409,19 @@ def export_comparison(connection: sqlite3.Connection, path: Path | str) -> Path:
 
 def csv_rows(summaries: Sequence[RunSummary]) -> list[list[str]]:
     """CSV-ready rows (header first) for the report appendix."""
-    header = ["configuration", "runs", "loads", "p50_ms", "overhead", "accuracy", "f1", "ci_low", "ci_high"]
+    header = [
+        "configuration",
+        "runs",
+        "loads",
+        "p50_ms",
+        "overhead",
+        "wire_bps",
+        "idle_bps",
+        "accuracy",
+        "f1",
+        "ci_low",
+        "ci_high",
+    ]
     rows = [header]
     for summary in summaries:
         data = summary.to_dict()

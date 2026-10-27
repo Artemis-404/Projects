@@ -72,6 +72,8 @@ class Comparison:
                     "loads",
                     "p50_ms",
                     "overhead",
+                    "wire_bps",
+                    "idle_bps",
                     "accuracy",
                     "f1",
                     "f1_ci_low",
@@ -90,6 +92,8 @@ class Comparison:
                         row["loads"],
                         row["p50_ms"],
                         row["overhead"],
+                        row["wire_bps"],
+                        row["idle_bps"],
                         row["accuracy"],
                         row["f1"],
                         row["f1_ci_low"],
@@ -156,14 +160,15 @@ def format_table(summaries: list[RunSummary]) -> str:
     """Plain-text table for the console and the report appendix."""
     header = (
         f"{'cfg':>3}  {'runs':>4}  {'loads':>5}  {'p50 ms':>7}  "
-        f"{'overhead':>8}  {'accuracy':>8}  {'F1':>6}  {'95% CI':>13}"
+        f"{'overhead':>8}  {'kbit/s':>7}  {'idle B/s':>8}  {'accuracy':>8}  {'F1':>6}  {'95% CI':>13}"
     )
     lines = [header, "-" * len(header)]
     for summary in summaries:
         row = summary.to_dict()
         lines.append(
             f"{row['configuration']:>3}  {row['runs']:>4}  {row['loads']:>5}  "
-            f"{row['p50_ms']:>7.1f}  {row['overhead']:>8.2f}  {row['accuracy']:>8.3f}  "
+            f"{row['p50_ms']:>7.1f}  {row['overhead']:>8.2f}  "
+            f"{row['wire_bps'] * 8 / 1000:>7.1f}  {row['idle_bps']:>8.1f}  {row['accuracy']:>8.3f}  "
             f"{row['f1']:>6.3f}  "
             f"[{row['f1_ci_low']:.3f}, {row['f1_ci_high']:.3f}]"
         )

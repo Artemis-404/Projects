@@ -48,6 +48,9 @@ curl --socks5-hostname 127.0.0.1:9150 http://demo.uqab/
 2. The whole transport is exercised end to end over loopback: SOCKS5 with remote
    DNS, mutual TLS 1.3, frame parsing, fixed-size records, the scheduler's slot
    pacing, the fail-closed guard, and the stats file.
+   From D21 the tunnel is **persistent and multiplexed**: pages that open several
+   connections still produce exactly one record stream, and the stream keeps
+   running (as cover) between page loads. The lab test asserts both.
 3. Page loads through the shaped channel really return the bytes (4117 B for `/`,
    3720 B for `/docs` in the reference transcript) and do so inside the
    configured slot timing (p95 slot error ≈ 1 ms on the reference machine).

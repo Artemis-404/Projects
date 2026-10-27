@@ -2,9 +2,11 @@
 
 Run on the bridge as ``ServerTransportPlugin uqab exec python -m pt.server``.  It
 prints the managed-server handshake, terminates the mutual-TLS tunnel, validates
-the session parameters against the personas it holds, and forwards recovered
-real bytes to the bridge's Tor ORPort.  The return direction is shaped on the
-same timetable as the client (FR-07).
+the session parameters against the personas it holds, and carries the client's
+multiplexed Tor streams to the bridge's Tor ORPort (one ORPort connection per
+stream, D21).  The return direction is shaped on the same timetable as the client
+(FR-07), and the record stream continues — as pure cover — for as long as the
+tunnel is open.
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ from cover.scheduler import Counters, SlotRecorder
 from logs import setup_logging
 from persona.model import Persona
 from persona.validator import Limits, discover_personas, fallback_persona, load_by_id
-from pt.session import PTStream, server_handshake
+from pt.mux import MuxSession
+from pt.session import server_handshake
 from security.guard import TunnelError, close_stream
 from tunnel.certs import CertPaths, ensure
 from tunnel.tls import TLSSettings, assert_tls13, peer_subject, server_context
@@ -157,25 +160,16 @@ class ServerPT:
         self.log.info("incoming tunnel from %s (%s)", writer.get_extra_info("peername"), peer_subject(writer))
 
         try:
-            or_reader, or_writer = await asyncio.open_connection(*self.orport)
-        except OSError as exc:
-            self.log.error("ORPort %s unreachable: %s", self.orport, exc)
-            await close_stream(writer)
-            return
-
-        try:
             params, persona = await server_handshake(
                 reader, writer, self.personas, self.greeting_size, self.log
             )
         except TunnelError as exc:
             self.log.warning("session rejected: %s", exc)
             await close_stream(writer)
-            await close_stream(or_writer)
             return
         except Exception as exc:  # pragma: no cover - malformed input
             self.log.warning("session failed: %s", exc)
             await close_stream(writer)
-            await close_stream(or_writer)
             return
 
         self.sessions += 1
@@ -183,35 +177,46 @@ class ServerPT:
         recorder = None
         if self._log_slots:
             recorder = SlotRecorder(self.run_dir / "logs" / "slots-server.jsonl")
-        stream = PTStream(
+        session = MuxSession(
             reader,
             writer,
             persona=persona,
             seed=params.seed,
             counters=session_counters,
-            upper_reader=or_reader,
-            upper_writer=or_writer,
             floor_slot_ms=self.floor_slot_ms,
             queue_bytes=self.queue_bytes,
             recorder=recorder,
+            dial=self._dial_orport,
             log=self.log,
         )
         started = time.time()
+        await session.start()
         try:
-            await stream.run()
-            self.log.info("session finished cleanly after %.1fs", time.time() - started)
-        except TunnelError as exc:
-            self.log.warning("tunnel failure on bridge side: %s", exc)
-        except Exception:
+            await session.wait_closed()
+            if session.error is None:
+                self.log.info("session finished cleanly after %.1fs", time.time() - started)
+        except Exception:  # pragma: no cover - defensive
             self.log.exception("unexpected bridge session error")
         finally:
             self._accumulate(session_counters)
             if recorder is not None:
                 self.log.info("bridge slot timing: %s", recorder.summary())
                 recorder.close()
-            await stream.close()
-            await close_stream(or_writer)
+            await session.close()
+            await close_stream(writer)
             self._active.discard(writer)
+
+    async def _dial_orport(self, host: str, port: int) -> tuple[Any, Any]:
+        """One ORPort connection per multiplexed stream.
+
+        ``host:port`` is the destination Tor asked the *client* for; the bridge
+        never dials it.  Every stream goes to the configured ORPort, which is what
+        keeps a compromised client from turning the bridge into an open proxy.
+        """
+        try:
+            return await asyncio.open_connection(*self.orport)
+        except OSError as exc:
+            raise TunnelError(f"ORPort {self.orport} unreachable: {exc}") from exc
 
     def _accumulate(self, counters: Counters) -> None:
         self.counters.real_up += counters.real_up

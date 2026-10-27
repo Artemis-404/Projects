@@ -12,14 +12,22 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from cover.record import PackedRecord, build_record, extract_data, parse_record
+from cover.record import PackedRecord, build_record, extract_data, pack_frames, parse_record
 from cover.timetable import Slot, Timetable
-from protocol.frames import HEADER_SIZE, Frame, FrameType
+from protocol.frames import (
+    HEADER_SIZE,
+    MAX_STREAM_DATA,
+    STREAM_ID_SIZE,
+    Frame,
+    FrameType,
+    stream_payload,
+)
 from security.guard import SessionClosed, TunnelClosed, TunnelError
 
 MAX_CHUNK = 65_536
@@ -147,6 +155,159 @@ class ByteQueue:
 
 
 @dataclass(slots=True)
+class _PendingStream:
+    """Bytes waiting for a slot, tagged with the stream they belong to.
+
+    ``data is None`` is the stream's END marker: it is queued *behind* that
+    stream's bytes so a STREAM_END can never overtake the data it terminates.
+    """
+
+    sid: int
+    data: bytes | None
+
+
+class StreamQueue:
+    """Bounded, frame-level queue for the multiplexed channel (D21).
+
+    The shaped channel asks for the frames that fit the next record, so a record
+    can carry several small STREAM_DATA frames (different streams) and a large
+    write is fragmented across records.  Control frames (OPEN/END) jump the queue
+    so a stream can start or stop without waiting behind a bulk transfer.
+    """
+
+    def __init__(self, max_bytes: int = 262_144) -> None:
+        self._items: deque[_PendingStream] = deque()
+        self._control: deque[Frame] = deque()
+        self._max = max(1024, int(max_bytes))
+        self._bytes = 0
+        self._closed = False
+        self._not_full = asyncio.Event()
+        self._not_full.set()
+        self._drained = asyncio.Event()
+        self._drained.set()
+        self.bytes_in = 0
+        self.bytes_out = 0
+
+    def __len__(self) -> int:
+        return self._bytes
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def pending_bytes(self) -> int:
+        return self._bytes
+
+    async def put(self, sid: int, data: bytes) -> None:
+        """Queue real bytes for ``sid``, waiting while the queue is full."""
+        if self._closed or not data:
+            return
+        view = memoryview(data)
+        offset = 0
+        while offset < len(view):
+            while self._bytes >= self._max and not self._closed:
+                self._not_full.clear()
+                await self._not_full.wait()
+            if self._closed:
+                return
+            room = self._max - self._bytes
+            chunk = bytes(view[offset : offset + room])
+            self._items.append(_PendingStream(int(sid), chunk))
+            self._bytes += len(chunk)
+            self._drained.clear()
+            self.bytes_in += len(chunk)
+            offset += len(chunk)
+
+    async def put_end(self, sid: int) -> None:
+        """Queue the END frame for ``sid`` behind every byte already queued."""
+        if self._closed:
+            return
+        while self._bytes >= self._max and not self._closed:
+            self._not_full.clear()
+            await self._not_full.wait()
+        if self._closed:
+            return
+        self._items.append(_PendingStream(int(sid), None))
+        self._bytes += 1
+        self._drained.clear()
+
+    def put_control(self, frame: Frame) -> None:
+        """Queue an OPEN/END frame; control frames never wait for bulk data."""
+        if not self._closed:
+            self._control.append(frame)
+            self._drained.clear()
+
+    def take(self, space: int) -> tuple[list[Frame], int]:
+        """Return ``(frames, real_bytes)`` that fit into ``space`` bytes."""
+        frames: list[Frame] = []
+        real = 0
+        remaining = space
+        while self._control:
+            frame = self._control[0]
+            size = HEADER_SIZE + len(frame.payload)
+            if size + HEADER_SIZE > remaining:
+                break
+            frames.append(frame)
+            self._control.popleft()
+            remaining -= size
+        while self._items and remaining >= HEADER_SIZE + STREAM_ID_SIZE + 1:
+            item = self._items[0]
+            if item.data is None:
+                self._items.popleft()
+                self._bytes = max(0, self._bytes - 1)
+                frames.append(Frame(FrameType.STREAM_END, stream_payload(item.sid)))
+                remaining -= HEADER_SIZE + STREAM_ID_SIZE
+                continue
+            room = min(
+                len(item.data),
+                remaining - HEADER_SIZE - STREAM_ID_SIZE - HEADER_SIZE,
+                MAX_STREAM_DATA,
+            )
+            if room <= 0:
+                break
+            chunk = item.data[:room]
+            frames.append(Frame(FrameType.STREAM_DATA, stream_payload(item.sid, chunk)))
+            real += len(chunk)
+            self.bytes_out += len(chunk)
+            self._bytes -= len(chunk)
+            remaining -= HEADER_SIZE + STREAM_ID_SIZE + len(chunk)
+            if room < len(item.data):
+                self._items[0] = _PendingStream(item.sid, item.data[room:])
+            else:
+                self._items.popleft()
+        if self._bytes < self._max:
+            self._not_full.set()
+        if not self._bytes:
+            self._drained.set()
+        return frames, real
+
+    def take_control(self) -> list[Frame]:
+        frames = list(self._control)
+        self._control.clear()
+        return frames
+
+    async def wait_empty(self, limit_s: float = 5.0) -> bool:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, limit_s)
+        while self._bytes or self._control:
+            if loop.time() >= deadline:
+                return False
+            await self._drained.wait()
+        return True
+
+    def clear(self) -> None:
+        self._items.clear()
+        self._control.clear()
+        self._bytes = 0
+        self._not_full.set()
+        self._drained.set()
+
+    def close(self) -> None:
+        self._closed = True
+        self.clear()
+
+
+@dataclass(slots=True)
 class SlotRecorder:
     """Collects slot timing error and writes one JSON line per slot (NFR-03)."""
 
@@ -222,9 +383,11 @@ class ShapedChannel:
         writer: asyncio.StreamWriter,
         timetable: Timetable,
         counters: Counters,
-        out_queue: ByteQueue,
+        out_queue: ByteQueue | None = None,
         *,
-        on_data: Callable[[bytes], Awaitable[None]],
+        frame_queue: StreamQueue | None = None,
+        on_data: Callable[[bytes], Awaitable[None]] | None = None,
+        on_frames: Callable[[list[Frame]], Awaitable[None]] | None = None,
         on_ping: Callable[[dict[str, Any]], None] | None = None,
         on_period: Callable[[str], None] | None = None,
         recorder: SlotRecorder | None = None,
@@ -236,7 +399,9 @@ class ShapedChannel:
         self.timetable = timetable
         self.counters = counters
         self.queue = out_queue
+        self.frames = frame_queue
         self.on_data = on_data
+        self.on_frames = on_frames
         self.on_ping = on_ping
         self.on_period = on_period
         self.recorder = recorder or SlotRecorder()
@@ -273,18 +438,26 @@ class ShapedChannel:
                 await asyncio.sleep(delay)
             if self._closing:
                 return
-            # A record has room for at most one DATA frame of record_size - 3 B,
-            # so take exactly that much and never lose a byte to padding.
-            payload = self.queue.take(max(0, slot.record_size - HEADER_SIZE))
-            packed = build_record(payload, slot.record_size)
-            if packed.consumed < len(payload):  # pragma: no cover - defensive
-                self.queue.push_front(payload[packed.consumed :])
+            if self.frames is not None:
+                # Frame mode (D21): whole STREAM_/OPEN/END frames fill the record
+                # and one PADDING frame closes it, so several streams can share a
+                # slot.  A large write is fragmented over the following slots.
+                chosen, real = self.frames.take(slot.record_size)
+                packed = pack_frames(chosen, slot.record_size)
+            else:
+                # Byte mode: one DATA frame of at most record_size - 3 B.
+                assert self.queue is not None  # byte mode requires a byte queue
+                payload = self.queue.take(max(0, slot.record_size - HEADER_SIZE))
+                packed = build_record(payload, slot.record_size)
+                real = packed.real_bytes
+                if packed.consumed < len(payload):  # pragma: no cover - defensive
+                    self.queue.push_front(payload[packed.consumed :])
             self.writer.write(packed.raw)
             await self.writer.drain()
             now = loop.time()
             self.last_record_size = slot.record_size
             last_send = now
-            self.counters.add_up(packed.real_bytes, packed.cover_bytes)
+            self.counters.add_up(real, len(packed.raw) - real)
             self.recorder.record(slot, (now - due) * 1000.0, len(packed.raw), now)
             if slot.state != self.period:
                 self.period = slot.state
@@ -302,6 +475,17 @@ class ShapedChannel:
                     f"peer closed mid-record ({len(exc.partial)} of {slot.record_size} B)"
                 ) from exc
             frames = parse_record(raw, slot.record_size)
+            if self.on_frames is not None:
+                if any(frame.type is FrameType.CLOSE for frame in frames):
+                    raise SessionClosed("peer ended the session")
+                await self.on_frames(frames)
+                real = sum(
+                    max(0, len(f.payload) - STREAM_ID_SIZE)
+                    for f in frames
+                    if f.type is FrameType.STREAM_DATA
+                )
+                self.counters.add_down(real, slot.record_size - real)
+                continue
             data = extract_data(frames)
             for frame in frames:
                 if frame.type is FrameType.CLOSE:
@@ -312,7 +496,8 @@ class ShapedChannel:
                     self.on_ping(parse_ping(frame.payload))
             if data:
                 self.counters.add_down(len(data), slot.record_size - len(data))
-                await self.on_data(data)
+                if self.on_data is not None:
+                    await self.on_data(data)
             else:
                 self.counters.add_down(0, slot.record_size)
 
@@ -349,7 +534,10 @@ class ShapedChannel:
 
     async def stop(self) -> None:
         self._closing = True
-        self.queue.close()
+        if self.queue is not None:
+            self.queue.close()
+        if self.frames is not None:
+            self.frames.close()
 
 
 def now() -> float:

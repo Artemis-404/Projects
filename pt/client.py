@@ -1,9 +1,14 @@
 """Managed pluggable transport client (FR-01, FR-09, SDD 5.4).
 
 Run by Tor as ``ClientTransportPlugin uqab exec python -m pt.client``.  It speaks
-the PT spec v1 managed handshake on stdout, gives Tor a SOCKS5 listener, and for
-every SOCKS stream opens the mutual-TLS tunnel to the UQAB bridge, exchanges the
-session parameters, and carries Tor's bytes inside fixed-size cover records.
+the PT spec v1 managed handshake on stdout and gives Tor a SOCKS5 listener.
+
+The mutual-TLS tunnel to the bridge is *persistent* (D21): it is opened on the
+first SOCKS request, carries the session parameters once, and then keeps running
+the persona timetable for as long as the client lives — including while the user
+is idle — with every Tor stream multiplexed inside it.  Cover traffic therefore
+never stops, and the observer never sees a "nothing at all" gap or a burst of N
+parallel tunnels when a page opens N connections.
 
 Failure behaviour (FR-09, D9): if the tunnel cannot be established or breaks, the
 Tor SOCKS stream is closed and the client retries the bridge every
@@ -31,11 +36,11 @@ from logs import setup_logging
 from persona.model import Persona
 from persona.validator import Limits, discover_personas, fallback_persona, load_by_id
 from pt import socks5
-from pt.session import PTStream, SessionParams, client_handshake
+from pt.mux import MuxSession, Stream
+from pt.session import SessionParams, client_handshake
 from pt.stats import StatsWriter
 from security.guard import (
     FailClosedGuard,
-    SessionClosed,
     TunnelError,
     close_stream,
     fail_closed,
@@ -110,6 +115,11 @@ class ClientPT:
         self.connected_peers = 0
         self.server: asyncio.Server | None = None
         self._active: set[asyncio.StreamWriter] = set()
+        self.session: MuxSession | None = None
+        self._session_lock = asyncio.Lock()
+        self._recorder: SlotRecorder | None = None
+        self._maintainer: asyncio.Task[Any] | None = None
+        self._stopping = False
         self._slot_log = bool(self.cfg.get_bool("pt.log_slots", True))
         self.personas = self._load_personas()
         if self.persona_id not in self.personas:
@@ -227,76 +237,114 @@ class ClientPT:
             "Tor stream from %s: %s:%d persona=%s", peer, request.host, request.port, persona.id
         )
 
+        stream: Stream | None = None
         try:
-            tls_reader, tls_writer = await self.connect_bridge(persona)
+            session = await self.carrier(persona)
+            stream = await session.open(request.host, request.port, reader, writer)
         except TunnelError as exc:
-            await fail_closed(self.guard, exc, writer)
+            self.log.warning("cannot carry a stream: %s", exc)
             with contextlib.suppress(Exception):
                 await socks5.send_reply(writer, socks5.REP_GENERAL_FAILURE)
-            await close_stream(writer)
-            return
-
-        seed = session_seed()
-        params = SessionParams(persona=persona.id, sha256=persona.content_hash(), seed=seed)
-        try:
-            await client_handshake(tls_reader, tls_writer, params, self.greeting_size)
-        except Exception as exc:
-            self.log.warning("session start rejected: %s", exc)
-            await fail_closed(self.guard, exc, writer, tls_writer)
-            with contextlib.suppress(Exception):
-                await socks5.send_reply(writer, socks5.REP_GENERAL_FAILURE)
-            return
-
-        await socks5.send_reply(writer, socks5.REP_SUCCESS)
-        self.guard.on_connected()
-        self.persona_id = persona.id
-        self.period = persona.start_state
-        self.session_started = time.time()
-        self.connected_peers += 1
-        self.publish()
-        self.log.info("session up: persona=%s seed=%d", persona.id, seed)
-
-        recorder = None
-        if self._slot_log:
-            recorder = SlotRecorder(self.run_dir / "logs" / "slots-client.jsonl")
-        stream = PTStream(
-            tls_reader,
-            tls_writer,
-            persona=persona,
-            seed=seed,
-            counters=self.counters,
-            upper_reader=reader,
-            upper_writer=writer,
-            floor_slot_ms=self.floor_slot_ms,
-            queue_bytes=self.queue_bytes,
-            recorder=recorder,
-            on_period=self._set_period,
-            log=self.log,
-        )
-        try:
-            await stream.run()
-            self.log.info("session ended cleanly")
-            self.guard.on_stopped()
-            self.publish()
-        except SessionClosed:
-            self.log.info("bridge ended the session cleanly")
-            self.guard.on_stopped()
-            self.publish()
-        except TunnelError as exc:
-            self.log.warning("tunnel failure, failing closed: %s", exc)
-            await fail_closed(self.guard, exc, writer, tls_writer)
-            self.publish()
-        except Exception as exc:  # pragma: no cover - unexpected
-            self.log.exception("unexpected session error")
-            await fail_closed(self.guard, exc, writer, tls_writer)
-            self.publish()
-        finally:
-            await stream.close()
-            if recorder is not None:
-                self.log.info("slot timing: %s", recorder.summary())
-                recorder.close()
             await close_stream(writer)
             self._active.discard(writer)
+            return
+
+        with contextlib.suppress(Exception):
+            await socks5.send_reply(writer, socks5.REP_SUCCESS)
+        self.connected_peers = len(self.session.streams) if self.session else 0
+        self.publish()
+        try:
+            await stream.done.wait()
+        finally:
+            if stream.error:
+                self.log.warning("stream %d ended with %s", stream.sid, stream.error)
+            self.connected_peers = len(self.session.streams) if self.session else 0
+            self.publish()
+            await close_stream(writer)
+            self._active.discard(writer)
+
+    # --------------------------------------------------------------- carrier
+    async def carrier(self, persona: Persona) -> MuxSession:
+        """Return the live shaped session, opening it on first use (D21).
+
+        The session is shared by every SOCKS stream and outlives them: after the
+        last stream closes the slot clock keeps running, so the record stream an
+        observer sees is continuous for the whole lifetime of the client.
+        """
+        async with self._session_lock:
+            session = self.session
+            if session is not None and session.is_open:
+                if session.persona.id != persona.id:
+                    self.log.warning(
+                        "persona %s requested but the session runs %s; "
+                        "Tor fixes the persona per session",
+                        persona.id,
+                        session.persona.id,
+                    )
+                return session
+            tls_reader, tls_writer = await self.connect_bridge(persona)
+            seed = session_seed()
+            params = SessionParams(
+                persona=persona.id, sha256=persona.content_hash(), seed=seed
+            )
+            try:
+                await client_handshake(tls_reader, tls_writer, params, self.greeting_size)
+            except Exception as exc:
+                await fail_closed(self.guard, exc, None, tls_writer)
+                raise TunnelError(f"session start rejected: {exc}") from exc
+
+            recorder = None
+            if self._slot_log:
+                recorder = SlotRecorder(self.run_dir / "logs" / "slots-client.jsonl")
+            session = MuxSession(
+                tls_reader,
+                tls_writer,
+                persona=persona,
+                seed=seed,
+                counters=self.counters,
+                floor_slot_ms=self.floor_slot_ms,
+                queue_bytes=self.queue_bytes,
+                recorder=recorder,
+                on_period=self._set_period,
+                on_ping=self._on_ping,
+                log=self.log,
+            )
+            await session.start()
+            self.session = session
+            self._recorder = recorder
+            self.persona_id = persona.id
+            self.period = persona.start_state
+            self.session_started = time.time()
+            self.guard.on_connected()
+            self.publish()
+            self.log.info(
+                "shaped session up: persona=%s seed=%d (cover runs until shutdown)",
+                persona.id,
+                seed,
+            )
+            asyncio.create_task(self._watch_session(session), name="uqab-session-watch")
+            return session
+
+    async def _watch_session(self, session: MuxSession) -> None:
+        """Publish the failure and release the slot clock when a session dies."""
+        await session.wait_closed()
+        if self.session is not session:
+            return
+        self.session = None
+        self.connected_peers = 0
+        if self._recorder is not None:
+            self.log.info("slot timing: %s", self._recorder.summary())
+            self._recorder.close()
+            self._recorder = None
+        if session.error is not None:
+            self.guard.on_failure(str(session.error))
+        else:
+            self.guard.on_stopped()
+        self.publish()
+        self.log.info("shaped session closed")
+
+    def _on_ping(self, payload: dict[str, object]) -> None:
+        self.log.debug("session ping: %s", payload)
 
     def _set_period(self, period: str) -> None:
         self.period = period
@@ -304,8 +352,15 @@ class ClientPT:
         self.publish()
 
     async def serve(self, *, announce: bool = True) -> None:
-        """Start the SOCKS listener and the stats writer, then serve until stopped."""
+        """Start the SOCKS listener, the cover tunnel and the stats writer.
+
+        The shaped session is opened *eagerly* (D21): the app's tab gate only
+        opens once the tunnel reports ``connected``, and the whole point of the
+        persistent session is that cover starts with the engine, not with the
+        first page.
+        """
         self.stats.start()
+        self._maintainer = asyncio.create_task(self._maintain_carrier(), name="uqab-carrier")
         self.server = await asyncio.start_server(
             self._handle_socks, self.bind_host, self.bind_port
         )
@@ -322,8 +377,44 @@ class ClientPT:
         finally:
             await self.stats.stop()
 
+    async def _maintain_carrier(self) -> None:
+        """Keep a shaped session up for as long as the client runs (D21, FR-09)."""
+        while not self._stopping:
+            session = self.session
+            if session is not None and session.is_open:
+                await session.wait_closed()
+                continue
+            persona = self.personas[self.persona_id]
+            try:
+                session = await self.carrier(persona)
+            except TunnelError as exc:
+                self.log.warning("cover tunnel unavailable (%s); retrying in %.0fs", exc, self.retry_s)
+                self.guard.on_failure(str(exc))
+                self.publish()
+                await asyncio.sleep(self.retry_s)
+                continue
+            except asyncio.CancelledError:  # pragma: no cover - shutdown
+                return
+            except Exception as exc:  # pragma: no cover - defensive
+                self.log.exception("unexpected carrier failure: %s", exc)
+                await asyncio.sleep(self.retry_s)
+                continue
+            await session.wait_closed()
+
     async def shutdown(self) -> None:
-        """Stop accepting and close every live Tor stream (FR-09)."""
+        """Stop accepting, end the shaped session and close every Tor stream."""
+        self._stopping = True
+        if self._maintainer is not None:
+            self._maintainer.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._maintainer
+            self._maintainer = None
+        if self.session is not None:
+            await self.session.close("client shutting down")
+            self.session = None
+        if self._recorder is not None:
+            self._recorder.close()
+            self._recorder = None
         self.guard.on_stopped()
         self.stats.write_once()
         await self.stats.stop()

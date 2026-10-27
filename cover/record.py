@@ -14,11 +14,16 @@ from dataclasses import dataclass
 from protocol.frames import (
     HEADER_SIZE,
     MAX_FRAME_PAYLOAD,
+    STREAM_ID_SIZE,
     Frame,
     FrameType,
     ProtocolError,
     encode_frame,
+    parse_stream_payload,
 )
+
+#: Frames whose payload counts as real user bytes (STREAM_DATA carries a stream id).
+REAL_FRAME_TYPES = (FrameType.DATA, FrameType.STREAM_DATA)
 
 MAX_RECORD_SIZE = 16_384
 MIN_RECORD_SIZE = HEADER_SIZE
@@ -38,7 +43,7 @@ class PackedRecord:
 
     @property
     def real_bytes(self) -> int:
-        return sum(len(f.payload) for f in self.frames if f.type is FrameType.DATA)
+        return sum(frame_real_bytes(f) for f in self.frames)
 
     @property
     def cover_bytes(self) -> int:
@@ -109,6 +114,39 @@ def build_record(
     return PackedRecord(bytes(raw), offset, tuple(frames))
 
 
+def frame_real_bytes(frame: Frame) -> int:
+    """Real (non-cover) payload bytes carried by one frame."""
+    if frame.type is FrameType.DATA:
+        return len(frame.payload)
+    if frame.type is FrameType.STREAM_DATA:
+        return max(0, len(frame.payload) - STREAM_ID_SIZE)
+    return 0
+
+
+def pack_frames(frames: Sequence[Frame], record_size: int) -> PackedRecord:
+    """Pack already-formed frames into one record, padding the remainder.
+
+    Used by the multiplexed channel (D21), where the sender decides which whole
+    frames go into a record instead of handing over a byte payload.  Frames that
+    do not fit raise :class:`CoverError`; the caller must choose a smaller set.
+    """
+    validate_record_size(record_size)
+    raw = bytearray()
+    real = 0
+    for frame in frames:
+        encoded = encode_frame(frame)
+        if len(raw) + len(encoded) + HEADER_SIZE > record_size:
+            raise CoverError("frames do not fit in the record")
+        raw += encoded
+        real += frame_real_bytes(frame)
+    padding = record_size - len(raw)
+    if padding < HEADER_SIZE:
+        raise CoverError("frames leave no room for the padding frame")
+    pad = Frame(FrameType.PADDING, bytes(padding - HEADER_SIZE))
+    raw += encode_frame(pad)
+    return PackedRecord(bytes(raw), real, (*frames, pad))
+
+
 def padding_record(record_size: int) -> PackedRecord:
     """A record that carries no real bytes (cover only)."""
     return build_record(b"", record_size)
@@ -132,8 +170,10 @@ def parse_record(raw: bytes, record_size: int) -> list[Frame]:
         if end > record_size:
             raise CoverError("frame crosses the record boundary")
         frame = Frame(FrameType.parse(type_code), raw[offset + HEADER_SIZE : end])
-        if frames and frame.type is FrameType.DATA and frames[-1].type is FrameType.PADDING:
-            raise CoverError("DATA frame after PADDING frame")
+        if frame.type is FrameType.STREAM_DATA:
+            parse_stream_payload(frame.payload)  # rejects a missing stream id
+        if frames and frame.type is not FrameType.PADDING and frames[-1].type is FrameType.PADDING:
+            raise CoverError(f"{frame.type.name} frame after PADDING frame")
         frames.append(frame)
         offset = end
     return frames

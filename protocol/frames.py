@@ -36,6 +36,9 @@ class FrameType(IntEnum):
     PADDING = 0x02
     PING = 0x03
     CLOSE = 0x04
+    STREAM_OPEN = 0x05
+    STREAM_DATA = 0x06
+    STREAM_END = 0x07
 
     @classmethod
     def parse(cls, value: int) -> FrameType:
@@ -138,6 +141,29 @@ class FrameParser:
     def close(self) -> None:
         self.closed = True
         self._buffer = bytearray()
+
+
+STREAM_ID_SIZE: Final[int] = 2
+MAX_STREAM_DATA: Final[int] = MAX_FRAME_PAYLOAD - STREAM_ID_SIZE
+MIN_STREAM_ID: Final[int] = 1
+MAX_STREAM_ID: Final[int] = 65_535
+
+
+def stream_payload(stream_id: int, body: bytes = b"") -> bytes:
+    """``StreamId | Body`` for the multiplexed frame types (D21)."""
+    if not MIN_STREAM_ID <= int(stream_id) <= MAX_STREAM_ID:
+        raise ProtocolError(f"stream id {stream_id!r} outside [1, {MAX_STREAM_ID}]")
+    return int(stream_id).to_bytes(STREAM_ID_SIZE, "big") + body
+
+
+def parse_stream_payload(payload: bytes) -> tuple[int, bytes]:
+    """Split a multiplexed frame payload into ``(stream id, body)``."""
+    if len(payload) < STREAM_ID_SIZE:
+        raise ProtocolError("multiplexed frame is shorter than a stream id")
+    stream_id = int.from_bytes(payload[:STREAM_ID_SIZE], "big")
+    if stream_id == 0:
+        raise ProtocolError("stream id 0 is reserved")
+    return stream_id, payload[STREAM_ID_SIZE:]
 
 
 def ping_payload(obj: dict[str, object]) -> bytes:

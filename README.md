@@ -7,6 +7,12 @@ hand. To an observer on the link, a UQAB session looks like a steady stream of
 equal-sized records whose rhythm changes between states, instead of like Tor's
 bursty, recognisable ACTIVE/IDLE pattern.
 
+One client is one shaped tunnel: every Tor stream is multiplexed inside a single
+PT session that keeps running — and keeps sending cover records — while the user
+is idle (design decision D21). That is what makes "IDLE" indistinguishable from
+"ACTIVE" on the wire, and it is what the A/B/C experiment in
+`docs/report/sample-results.md` measures.
+
 The repository contains the whole project described in the SRS, SDD and phase
 plan: the transport, the persona pipeline, the evaluation pipeline, the
 Windows browser app (a Min-derived Electron shell), and the A/B/C experiment
@@ -112,13 +118,16 @@ the dashboard routes and the packaging layout.
 ## Documentation
 
 * `docs/DESIGN_DECISIONS.md` — every decision that deviates from, or fills a gap
-  in, the SDD (D1–D12 plus the implementation notes).
+  in, the SDD (D1–D21, including the persistent multiplexed tunnel).
 * `docs/LAB_MODE.md` — exactly what lab simulation does and does not prove.
 * `docs/REPORT.md` — the report skeleton with the tables the experiment produces.
 * `docs/PACKAGING.md` — installers (Windows `.exe`, Linux AppImage/deb), portable
   bundle, and how GUI settings reach the engine.
 * `docs/USER_GUIDE.md` — the end-user guide: install, setup, everyday use,
   troubleshooting.
+* `docs/VERIFICATION.md` — what was actually run in the build environment (test
+  counts, end-to-end demos) and what needs your own machine.
+* `docs/HANDOFF.md` — clone → gates → installers → what to do next, in order.
 
 ## Licensing
 

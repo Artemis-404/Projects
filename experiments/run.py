@@ -382,6 +382,10 @@ def run_experiment(
     result.write(run_dir / "summary.json")
 
     connection = open_db(Path(cfg.path("paths.sqlite")))
+    total_window_s = sum(max(0.0, w.end - w.start) for w in windows)
+    idle_window_s = sum(max(0.0, w.end - w.start) for w in windows if w.label == "idle")
+    idle_window_bytes = sum(w.bytes for w in windows if w.label == "idle")
+    window_bytes = sum(w.bytes for w in windows)
     try:
         record_run(
             connection,
@@ -396,8 +400,12 @@ def run_experiment(
                 # Wire bytes per byte of page content: config A approaches 1,
                 # cover configurations pay for the padding records.
                 overhead=round(
-                    float(sum(w.bytes for w in windows)) / max(1.0, float(result.summary["bytes"])),
+                    float(window_bytes) / max(1.0, float(result.summary["bytes"])),
                     3,
+                ),
+                wire_bps=round(float(window_bytes) / total_window_s, 1) if total_window_s else 0.0,
+                idle_bps=(
+                    round(float(idle_window_bytes) / idle_window_s, 1) if idle_window_s else 0.0
                 ),
                 notes=CONFIGURATION_NOTES[letter],
             ),

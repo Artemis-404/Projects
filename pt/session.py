@@ -1,10 +1,14 @@
-"""Session start and shaped byte streams (FR-07, SDD 5.3, 7.1).
+"""Session start: parameters, validation and the greeting record (FR-07, SDD 5.3).
 
 The client's first record carries a PING frame with the session parameters
 (``{"v":1,"persona":...,"sha256":...,"seed":...}``) and padding.  The server
 checks that it holds the persona and that its hash matches, then answers with a
 PING ``{"v":1,"ok":true}``.  Both sides then build the same timetable from the
 persona and the seed and start their slot loops.
+
+Once :func:`server_handshake` returns, both sides hand the same ``persona`` and
+``seed`` to :class:`pt.mux.MuxSession`, which then owns the slot clock for the
+whole life of the session (D21).
 
 The greeting record has a fixed, persona-independent size
 (``cover.greeting_record_size``), so an observer cannot learn the persona from
@@ -16,20 +20,16 @@ persona.  This is recorded as design clarification D5a in
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from cover.scheduler import ByteQueue, Counters, ShapedChannel, SlotRecorder
-from cover.timetable import Timetable
 from persona.model import Persona
 from protocol.frames import Frame, FrameType, ProtocolError, parse_ping, ping_payload
 from security.guard import TunnelClosed, TunnelError
 
 GREETING_VERSION = 1
-MAX_CHUNK = 65_536
 
 
 class SessionRejected(TunnelError):
@@ -155,111 +155,3 @@ async def server_handshake(
         "session accepted persona=%s seed=%d", params.persona, params.seed
     )
     return params, persona
-
-
-class PTStream:
-    """One shaped session over a Tor (client) or ORPort (server) byte stream."""
-
-    def __init__(
-        self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-        *,
-        persona: Persona,
-        seed: int,
-        counters: Counters,
-        upper_reader: asyncio.StreamReader,
-        upper_writer: asyncio.StreamWriter,
-        floor_slot_ms: int = 500,
-        queue_bytes: int = 262_144,
-        recorder: SlotRecorder | None = None,
-        on_period: Any = None,
-        log: logging.Logger | None = None,
-    ) -> None:
-        self.reader = reader
-        self.writer = writer
-        self.persona = persona
-        self.seed = seed
-        self.counters = counters
-        self.upper_reader = upper_reader
-        self.upper_writer = upper_writer
-        self.floor_slot_ms = floor_slot_ms
-        self.queue = ByteQueue(queue_bytes)
-        self.recorder = recorder
-        self.on_period = on_period
-        self.log = log or logging.getLogger("uqab.pt.session")
-        self.period = persona.start_state
-        self._channel: ShapedChannel | None = None
-
-    # ------------------------------------------------------------- internal
-    async def _forward_to_upper(self, data: bytes) -> None:
-        self.upper_writer.write(data)
-        await self.upper_writer.drain()
-
-    async def _pump_upper(self) -> None:
-        while True:
-            data = await self.upper_reader.read(MAX_CHUNK)
-            if not data:
-                return
-            await self.queue.put(data)
-
-    def _set_period(self, period: str) -> None:
-        self.period = period
-        if callable(self.on_period):
-            self.on_period(period)
-
-    # ------------------------------------------------------------------ api
-    @property
-    def channel(self) -> ShapedChannel:
-        if self._channel is None:
-            self._channel = ShapedChannel(
-                self.reader,
-                self.writer,
-                Timetable(self.persona, self.seed, self.floor_slot_ms),
-                self.counters,
-                self.queue,
-                on_data=self._forward_to_upper,
-                on_period=self._set_period,
-                recorder=self.recorder,
-                floor_slot_ms=self.floor_slot_ms,
-            )
-        return self._channel
-
-    async def run(self) -> None:
-        """Pump real bytes into the scheduler and run the shaped channel."""
-        channel = self.channel
-        pump = asyncio.create_task(self._pump_upper(), name="uqab-upper-pump")
-        shaped = asyncio.create_task(channel.run(), name="uqab-channel")
-        try:
-            done, pending = await asyncio.wait(
-                {pump, shaped}, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in done:
-                if task.cancelled():
-                    continue
-                exc = task.exception()
-                if exc is not None:
-                    raise exc
-            # The upper stream closed first: flush whatever is still queued so a
-            # response is never truncated, then end the session with CLOSE.
-            if pump.done() and not shaped.done():
-                drained = await self.queue.wait_empty(5.0)
-                if not drained:
-                    self.log.warning("queue not fully drained at session end")
-                with contextlib.suppress(Exception):
-                    await channel.send_close()
-                self.log.debug("upper stream closed; session ended cleanly")
-        finally:
-            for task in (pump, shaped):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(pump, shaped, return_exceptions=True)
-            self.queue.close()
-
-    async def close(self) -> None:
-        self.queue.close()
-        try:
-            self.writer.close()
-            await asyncio.wait_for(self.writer.wait_closed(), timeout=2.0)
-        except Exception:
-            pass

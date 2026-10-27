@@ -115,19 +115,20 @@ def comparison_table(data: ReportData) -> str:
     """The headline table: privacy (F1) against cost (latency, overhead)."""
     header = (
         "| Config | Meaning | Runs | Loads | Median load (ms) | Overhead | "
-        "Accuracy | F1 | 95% CI |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+        "Wire kbit/s | IDLE B/s | Accuracy | F1 | 95% CI |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     )
     lines = [header]
     for row in data.configurations:
         lines.append(
             f"| {row['configuration']} | {CONFIG_DESCRIPTIONS.get(str(row['configuration']), '')} "
             f"| {row['runs']} | {row['loads']} | {_fmt(row['p50_ms'], 0)} | "
-            f"{_fmt(row['overhead'])}x | {_fmt(row['accuracy'])} | {_fmt(row['f1'])} | "
+            f"{_fmt(row['overhead'])}x | {_fmt(float(row.get('wire_bps', 0)) * 8 / 1000, 1)} | "
+            f"{_fmt(row.get('idle_bps', 0), 1)} | {_fmt(row['accuracy'])} | {_fmt(row['f1'])} | "
             f"{_fmt(row['f1_ci_low'])}–{_fmt(row['f1_ci_high'])} |"
         )
     if len(lines) == 1:
-        lines.append("| - | no runs recorded | - | - | - | - | - | - | - |")
+        lines.append("| - | no runs recorded | - | - | - | - | - | - | - | - | - |")
     return "\n".join(lines)
 
 
@@ -209,7 +210,13 @@ def interpretation(data: ReportData) -> str:
     if latency_ratio:
         parts.append(
             f"Cost: the median page load was {_fmt(latency_ratio, 2)}x plain Tor and the "
-            f"cover overhead was {_fmt(persona['overhead'])}x the page bytes."
+            f"cover overhead was {_fmt(persona['overhead'])}x the page bytes. Because the "
+            "tunnel is persistent (D21) that overhead is a *rate*, not a constant: it is "
+            f"paid every second, so it grows the longer the user stays idle. The wire rate "
+            f"was {_fmt(float(persona.get('wire_bps', 0)) * 8 / 1000, 1)} kbit/s and the "
+            f"observed traffic inside IDLE windows was "
+            f"{_fmt(persona.get('idle_bps', 0), 1)} B/s (plain Tor: "
+            f"{_fmt(by_config['A'].get('idle_bps', 0), 1) if 'A' in by_config else 'n/a'} B/s)."
         )
     if "B" in by_config:
         constant = by_config["B"]
@@ -226,9 +233,11 @@ def render(data: ReportData, *, title: str = "UQAB evaluation results") -> str:
     notes = "\n".join(f"- {note}" for note in data.notes) or "- none"
     return f"""# {title}
 
-Generated {data.generated_at} by `python -m experiments.report` from the local
-`uqab.sqlite` database. Every number below comes from a run recorded by
-`python -m experiments.compare`; nothing is typed in by hand.
+Generated {data.generated_at} from the local `uqab.sqlite` database. Every number
+below comes from runs recorded by `experiments.run` — nothing is typed in by
+hand. Regenerate it with `python -m experiments.report`, or produce a whole run
+end to end (experiment + tables) with `python scripts/demo.py`; each run stores
+its persona, seed and window counts so it can be replayed.
 
 ## Headline comparison
 

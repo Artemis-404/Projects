@@ -44,9 +44,11 @@ Three paragraphs, one per layer:
 
 1. **The shaped channel.** One TLS 1.3 connection between the PT client and the
    PT server; inside it, frames (`type | length | payload`) are packed into
-   records of exactly `record_size` bytes at slots of `slot_ms`. DATA frames go
-   first, one PADDING frame fills the rest, one `write()` per record. Any
-   violation closes the tunnel (fail-closed).
+   records of exactly `record_size` bytes at slots of `slot_ms`. Every Tor stream
+   is multiplexed inside that single tunnel (`STREAM_OPEN` / `STREAM_DATA` /
+   `STREAM_END`, D21), one PADDING frame fills the rest of each record, and each
+   record goes out in one `write()`. Any violation closes the tunnel
+   (fail-closed).
 2. **The persona timetable.** A persona is a small state machine: states carry
    `record_size`, `slot_ms` and a duration range; transitions are probabilities.
    The scheduler walks it, gives every state a floor rate, and limits
@@ -80,7 +82,15 @@ slot-log capture (D9) and the Min deviation (D12).
   (logistic regression, random forest), 5-fold stratified cross-validation,
   percentile bootstrap 95% CI for F1.
 * **Metrics.** Accuracy and F1 of the ACTIVE class, page-load latency (median,
-  p95), cover overhead (wire bytes per page byte), slot timing error (p50/p95).
+  p95), cover overhead (wire bytes per page byte), wire rate in kbit/s, wire
+  bytes per second inside IDLE windows (zero means the observer sees silence),
+  slot timing error (p50/p95). With a persistent tunnel (D21) overhead depends on
+  how *long* the user browses rather than only on how much they transfer, so both
+  rates are reported next to it.
+* **Labelling.** A window is labelled only when one ground-truth interval covers
+  at least 80 % of it (`analysis.features.MIN_LABEL_PURITY`); boundary windows are
+  dropped rather than guessed. An ACTIVE phase is extended to the real load time
+  so a slow page cannot leak traffic into the IDLE interval that follows.
 
 Commands:
 
@@ -93,9 +103,28 @@ python -m experiments.report --out docs/report/results.md
 
 ## 5. Results
 
-Reference run (`docs/report/sample-results.md`, reproducible with the command in
-section 4) — copy the generated table verbatim into the report. The tables it
-produces:
+Reference run: `docs/report/sample-results.md` (reproducible with the command in
+section 4). Copy that table verbatim into the report. It is produced by the code,
+not typed by hand, and the raw rows are in `docs/report/sample-results.json`, the
+run database (`data/uqab.sqlite`) and the per-run artefacts under
+`<paths.experiments>/<run_id>/`.
+
+What the reference run shows (lab simulation, 3 runs per configuration):
+
+* **Privacy.** Plain Tor (A) is easy to classify: the observer separates ACTIVE
+  from IDLE windows almost perfectly. Constant-rate cover (B) and persona cover
+  (C) both push F1 down to roughly chance-with-a-bad-confusion-matrix, i.e. the
+  inference task collapses.
+* **Cost.** B and C pay for it continuously — the tunnel is persistent (D21), so
+  the overhead multiplier grows the longer the user stays idle, and the IDLE
+  bytes/s column shows exactly that traffic. C's persona (`high`) is far more
+  expensive than B's constant rate; that is a persona *choice*, not a property of
+  the mechanism (`balanced` and `low` are cheap).
+* **Latency.** Median page load is essentially unchanged versus plain Tor in the
+  lab, because the shaping budget is per slot and the slot rate is high enough to
+  drain a loopback page.
+
+The tables it produces:
 
 1. the A/B/C comparison (F1 with CI, median load, overhead),
 2. every run (persona, duration, bytes, slot timing),
@@ -131,6 +160,10 @@ Say all of this plainly:
 * Lab runs have no Tor circuits and no real network conditions; absolute F1 values
   are optimistic. Only the relative ordering of A/B/C in the *same* environment is
   meaningful.
+* The observer classifies 1 s windows from size/timing/direction only. It does
+  not attempt long-range correlation, website fingerprinting or traffic shaping
+  detection — a real adversary that noticed "constant-rate tunnel" would attack
+  differently, and that is out of scope for this evaluation.
 * Configuration A in lab mode is a plain relay (D7), not a Tor circuit.
 * The observer is link-level only: no timing side channels beyond 1 s windows, no
   packet-level machine learning, no long-term correlation.
@@ -154,13 +187,28 @@ cd app && npm install && npm test && npm start
 python scripts/demo.py --loads 20 --idle 2 --repeats 3
 python packaging/build_installer.py --check
 python packaging/build_portable.py
+cd app && npm install && npm test
 ```
 
 ## 9. Conclusion
 
-Two or three sentences tied to the numbers in section 5: what persona cover did to
-observer F1, what it cost, and what would be needed to make the claim stronger (a
-real bridge, more timelines, more observers).
+Answer the research question in three sentences, tied to section 5:
+
+1. **Privacy.** Persona cover (C) and constant-rate cover (B) both collapse the
+   observer's ACTIVE/IDLE F1 compared with plain Tor (A). Say the measured F1
+   values and the intervals, and be explicit that this is one lab observer with
+   eight window features — it is evidence for the mechanism, not a proof about
+   real networks.
+2. **Cost.** State the latency ratio and the overhead, and say *why* the overhead
+   is a rate rather than a constant: with a persistent multiplexed tunnel (D21)
+   cover is paid per second of connection, so a browser that idles a lot pays
+   more. A cheaper persona (`balanced`, `low`) trades some of the cover richness
+   for a lower rate; B is the cheapest way to break the inference.
+3. **What would strengthen the claim.** A real bridge and a real Tor client, more
+   and longer timelines, more than one observer model (including a sequence model
+   rather than per-window classification), and a comparison against a padding-only
+   transport. Each of those is a known limitation listed in section 7, not a
+   hidden one.
 
 ## 10. References
 

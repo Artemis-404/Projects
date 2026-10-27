@@ -1,46 +1,52 @@
 {
-  "generated_at": "2026-10-27 02:35",
+  "generated_at": "2026-10-27 03:14",
   "configurations": [
     {
       "configuration": "A",
       "runs": 3,
-      "loads": 60,
-      "p50_ms": 977.131,
+      "loads": 36,
+      "p50_ms": 1938.392,
       "overhead": 1.041,
-      "accuracy": 0.9444,
-      "f1": 0.9127,
-      "f1_ci_low": 0.7222,
+      "wire_bps": 13880.7,
+      "idle_bps": 994.9,
+      "accuracy": 0.9697,
+      "f1": 0.9729,
+      "f1_ci_low": 0.7857,
       "f1_ci_high": 1.0
     },
     {
       "configuration": "B",
       "runs": 3,
-      "loads": 60,
-      "p50_ms": 1201.321,
-      "overhead": 2.7933,
-      "accuracy": 0.8843,
-      "f1": 0.8502,
-      "f1_ci_low": 0.6122,
-      "f1_ci_high": 1.0
+      "loads": 36,
+      "p50_ms": 2002.734,
+      "overhead": 6.0593,
+      "wire_bps": 20862.6,
+      "idle_bps": 21278.8,
+      "accuracy": 0.5176,
+      "f1": 0.4948,
+      "f1_ci_low": 0.0909,
+      "f1_ci_high": 0.8108
     },
     {
       "configuration": "C",
       "runs": 3,
-      "loads": 60,
-      "p50_ms": 988.694,
-      "overhead": 3.4767,
-      "accuracy": 0.9426,
-      "f1": 0.919,
-      "f1_ci_low": 0.7742,
-      "f1_ci_high": 1.0
+      "loads": 36,
+      "p50_ms": 2008.459,
+      "overhead": 5.991,
+      "wire_bps": 20606.9,
+      "idle_bps": 21336.6,
+      "accuracy": 0.4377,
+      "f1": 0.4873,
+      "f1_ci_low": 0.1538,
+      "f1_ci_high": 0.8333
     }
   ],
   "statistics": {
     "runs": 9,
     "configurations": 3,
-    "page_loads": 180,
-    "loads_ok": 180
+    "page_loads": 108,
+    "loads_ok": 108
   },
   "notes": [],
-  "interpretation": "Plain Tor was classified with F1 0.913 (95% CI 0.722\u20131.000); persona cover with F1 0.919 (95% CI 0.774\u20131.000). The difference in F1 is smaller than 0.05 and inside the reported intervals, so this dataset does not support a claim either way. Cost: the median page load was 1.01x plain Tor and the cover overhead was 3.477x the page bytes. Constant-rate cover (B) scored F1 0.850 at 2.793x overhead; it is the baseline that persona cover has to beat on cost without giving up inference resistance."
+  "interpretation": "Plain Tor was classified with F1 0.973 (95% CI 0.786\u20131.000); persona cover with F1 0.487 (95% CI 0.154\u20130.833). Persona cover reduced the observer's ACTIVE/IDLE F1 by 0.486 in this dataset, i.e. it made the inference task harder. Cost: the median page load was 1.04x plain Tor and the cover overhead was 5.991x the page bytes. Because the tunnel is persistent (D21) that overhead is a *rate*, not a constant: it is paid every second, so it grows the longer the user stays idle. The wire rate was 164.9 kbit/s and the observed traffic inside IDLE windows was 21336.6 B/s (plain Tor: 994.9 B/s). Constant-rate cover (B) scored F1 0.495 at 6.059x overhead; it is the baseline that persona cover has to beat on cost without giving up inference resistance."
 }

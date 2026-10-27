@@ -180,3 +180,50 @@ payload, and the reader returns the frame size (Ethernet + IP + TCP/UDP) for bot
 IPv4 and IPv6. A record of *n* bytes round-trips as *n*; `tests/test_profile.py`
 pins sizes from 64 B to 16 KiB. Honest sizes are a precondition for honest
 observability numbers, so this is a correctness fix, not a cosmetic one.
+
+## D21 — One persistent, multiplexed tunnel per client (not one per stream)
+
+The pre-D21 transport opened a shaped session for **every** Tor stream. That is
+easy to implement and wrong for the research question: while the user idles there
+is no UQAB traffic at all, and when a page loads six connections the observer sees
+six parallel record streams whose aggregate rate jumps six-fold. Both facts leak
+more than the persona hides, and neither is something the persona timetable can
+compensate for.
+
+The transport now keeps **one** TLS tunnel and **one** record stream per client:
+it is opened on the first SOCKS request, carries the session parameters once, and
+then runs the slot clock until the engine stops. Tor streams are multiplexed
+inside it with three frame types —
+
+| frame | payload | meaning |
+| --- | --- | --- |
+| `STREAM_OPEN` (0x05) | `StreamId | "host:port"` | a Tor stream begins |
+| `STREAM_DATA` (0x06) | `StreamId | bytes` | bulk data, fragmented over records |
+| `STREAM_END` (0x07) | `StreamId` | one direction is finished |
+
+— while `PING`/`CLOSE` keep their session-level meaning and `PADDING` still fills
+every record to `record_size`. The client allocates odd stream ids, the bridge
+even ones.
+
+Consequences that are deliberately accepted:
+
+* **Cover never stops.** IDLE now looks exactly like ACTIVE from the wire: same
+  record sizes, same slots. That is the whole point, and it is what makes the
+  A/B/C comparison meaningful (see `docs/report/sample-results.md`).
+* **Cost is per second, not per byte.** A continuously shaped tunnel spends
+  cover bytes while nothing is happening, so "overhead = wire bytes / page bytes"
+  grows as the user browses less. The comparison table therefore also reports
+  wire kbit/s and IDLE B/s; both are recorded per run
+  (`runs.wire_bps`, `runs.idle_bps`, schema v2 with an in-place migration).
+* **One persona per session.** The persona is negotiated in the greeting; a
+  second stream asking for a different persona is carried on the session's
+  persona and the mismatch is logged. Rotating personas mid-session would itself
+  be a fingerprint.
+* **A dead tunnel is still fail-closed.** Every stream inside the tunnel is
+  closed when the session fails (`tests/test_mux.py`), and the next SOCKS request
+  re-opens the tunnel with the same retry policy as before.
+
+`STREAM_END` is queued **behind** that stream's bytes, never ahead of them: an END
+that overtakes its own data truncates the response (this was caught by the lab
+test, which now asserts a full 4117-byte page arrives through the shaped path).
+
