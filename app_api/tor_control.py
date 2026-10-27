@@ -116,6 +116,12 @@ def describe_tor(cfg: object, extra_dirs: list[Path] | None = None) -> dict[str,
     }
 
 
+def torrc_quote(value: object) -> str:
+    """A path inside a quoted torrc value. Tor treats backslash as an escape
+    character in quoted strings, so Windows paths use forward slashes."""
+    return '"' + str(value).replace("\\", "/") + '"'
+
+
 def write_torrc(
     cfg: object,
     run_dir: Path,
@@ -140,8 +146,8 @@ def write_torrc(
     config_path = config_path or str(cfg.root / "config" / "config.yaml")  # type: ignore[attr-defined]
 
     plugin = (
-        f'ClientTransportPlugin uqab exec "{python_exe}" -u -m pt.client '
-        f'--config "{config_path}"'
+        f"ClientTransportPlugin uqab exec {torrc_quote(python_exe)} -u -m pt.client "
+        f"--config {torrc_quote(config_path)}"
     )
     # Bridge lines from the Setup wizard (tor.bridges) win over the single
     # bridge.* default. Each line is "host:port [fingerprint]", optionally with
@@ -171,8 +177,8 @@ def write_torrc(
         f"SocksPort {TOR_CONTROL_HOST}:{socks_port}",
         f"ControlPort {TOR_CONTROL_HOST}:{control_port}",
         "CookieAuthentication 1",
-        f'DataDirectory "{data_dir}"',
-        f'Log notice file "{run_dir / "logs" / "tor.log"}"',
+        f"DataDirectory {torrc_quote(data_dir)}",
+        f"Log notice file {torrc_quote(run_dir / 'logs' / 'tor.log')}",
         "UseBridges 1",
         plugin,
         *bridges,
