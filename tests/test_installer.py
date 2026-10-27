@@ -61,6 +61,15 @@ def test_builder_command_targets_the_requested_platforms() -> None:
     assert "app" in command[command.index("--projectDir") + 1]
 
 
+def test_builder_resolves_npx_cmd_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    shim = r"C:\Program Files\nodejs\npx.CMD"
+    monkeypatch.setattr(build_installer.shutil, "which", lambda name: shim if name == "npx" else None)
+    command = build_installer.resolve_executable(["npx", "--yes", "electron-builder@26"])
+    assert command == [shim, "--yes", "electron-builder@26"]
+    monkeypatch.setattr(build_installer.shutil, "which", lambda name: None)
+    assert build_installer.resolve_executable(["npx", "-v"]) == ["npx", "-v"]
+
+
 def test_artifact_discovery_lists_packages(tmp_path: Path) -> None:
     for name in (
         "UQAB-Setup-1.0.0.exe",

@@ -234,8 +234,9 @@ def test_engine_writes_effective_config_for_children(cfg: Config) -> None:
     path = cfg.path("paths.run") / "effective-config.yaml"
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
-    assert str(cfg.path("paths.run")) in text
     assert "profiles_dir" in text
+    # Read it back the way a child process does (Windows paths are escaped in YAML).
+    assert load_config(path).path("paths.run") == cfg.path("paths.run")
     assert Path(engine.stats_path).name == "stats.json"
 
 

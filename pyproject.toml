@@ -17,7 +17,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["app", "node_modules", "dist"]
+extend-exclude = ["app", "node_modules", "dist", "build", "run", "data"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]
@@ -29,7 +29,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
-exclude = "(^app/|^dist/|^node_modules/)"
+exclude = "(^app/|^dist/|^node_modules/|^build/|^run/|^data/)"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

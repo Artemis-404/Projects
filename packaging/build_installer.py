@@ -164,7 +164,13 @@ def stage_python(
         shutil.rmtree(fake_bundle)
     fake_bundle.mkdir(parents=True, exist_ok=True)
     extract_python(tarball, fake_bundle)
-    shutil.move(str(fake_bundle / "resources" / "python"), str(PYTHON_STAGE))
+    extracted = fake_bundle / "resources" / "python"
+    if not extracted.is_dir():
+        shutil.rmtree(fake_bundle, ignore_errors=True)
+        raise RuntimeError(
+            f"{tarball.name} produced no runtime, so build/python has no interpreter"
+        )
+    shutil.move(str(extracted), str(PYTHON_STAGE))
     shutil.rmtree(fake_bundle, ignore_errors=True)
     return [str(PYTHON_STAGE)]
 
@@ -202,8 +208,15 @@ def electron_builder_command(platforms: list[str]) -> list[str]:
     return command
 
 
+def resolve_executable(command: list[str]) -> list[str]:
+    """Resolve argv[0] on PATH: on Windows `npx` is `npx.cmd`, which
+    subprocess cannot find by its bare name."""
+    found = shutil.which(command[0])
+    return [found, *command[1:]] if found else command
+
+
 def run_builder(platforms: list[str], *, timeout: float = 3600.0) -> tuple[bool, str]:
-    command = electron_builder_command(platforms)
+    command = resolve_executable(electron_builder_command(platforms))
     print("[installer] " + " ".join(command), flush=True)
     try:
         result = subprocess.run(

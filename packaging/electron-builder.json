@@ -44,7 +44,9 @@
       }
     ],
     "icon": "../app/assets/icon.ico",
-    "publisherName": "UQAB",
+    "signtoolOptions": {
+      "publisherName": "UQAB"
+    },
     "artifactName": "UQAB-Setup-${version}.${ext}"
   },
   "nsis": {
