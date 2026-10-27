@@ -22,6 +22,8 @@ ETHERTYPE_IPV4 = 0x0800
 ETHERTYPE_IPV6 = 0x86DD
 IPPROTO_TCP = 6
 IPPROTO_UDP = 17
+ETH_HEADER_LEN = 14
+MAX_IP_PAYLOAD = 65_535 - 40  # IPv4 total-length field minus the IP and TCP headers
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +70,13 @@ def build_packet(
     protocol: int = IPPROTO_TCP,
     seq: int = 1,
 ) -> bytes:
-    """Build one Ethernet/IPv4/TCP frame with a given on-wire size."""
-    payload = bytes(min(max(payload_size, 0), 1400))
+    """Build one Ethernet/IPv4/TCP frame with a given on-wire size.
+
+    A lab observation is one cover record, so payloads can exceed an Ethernet MTU
+    (up to the 16-bit IPv4 total-length field). Real captures come from tcpdump and
+    show MTU-sized segments instead; the feature extractor treats both alike.
+    """
+    payload = bytes(min(max(payload_size, 0), MAX_IP_PAYLOAD))
     tcp_header = struct.pack(
         "!HHIIHHHH",
         sport,
@@ -146,7 +153,8 @@ def _parse_ipv4(data: bytes) -> tuple[str, str, int, int, int] | None:
         return None
     sport = int.from_bytes(transport[0:2], "big")
     dport = int.from_bytes(transport[2:4], "big")
-    return src, dst, sport, dport, total_len if total_len >= 20 else len(data)
+    # ``total_len`` covers only the IP datagram; callers want the on-wire size.
+    return src, dst, sport, dport, total_len + ETH_HEADER_LEN if total_len >= 20 else len(data)
 
 
 def _parse_ipv6(data: bytes) -> tuple[str, str, int, int, int] | None:
@@ -165,7 +173,7 @@ def _parse_ipv6(data: bytes) -> tuple[str, str, int, int, int] | None:
         return None
     sport = int.from_bytes(transport[0:2], "big")
     dport = int.from_bytes(transport[2:4], "big")
-    return src, dst, sport, dport, payload_len + 40
+    return src, dst, sport, dport, payload_len + 40 + ETH_HEADER_LEN
 
 
 def read_pcap(path: Path | str) -> Iterator[Packet]:

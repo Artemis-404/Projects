@@ -68,6 +68,39 @@ curl --socks5-hostname 127.0.0.1:9150 http://demo.uqab/
   (bootstrap parsing, cookie authentication, shutdown) and the code paths are
   shared, but it cannot be verified in a sandbox without Tor.
 
+## The lab timeline: why phases are jittered and loads repeat
+
+The observer in these experiments sees one thing only: the size and direction of
+each record, one per slot. That makes a naive script easy to defeat — or, worse,
+easy to *win* for the wrong reason. Two artefacts had to be removed before any
+A/B/C number meant anything:
+
+1. **Phase boundaries on the analysis grid.** With a perfectly regular script
+   (`load_s`, `idle_s` exactly), every 1 s feature window falls either wholly
+   inside a phase or exactly on a boundary, so a classifier can separate ACTIVE
+   from IDLE by *where the window sits* rather than by what the traffic did. The
+   replay therefore draws `experiments.jitter_s` (default 400 ms) of uniform
+   jitter on every phase, and the ground truth records the duration that actually
+   elapsed, not the duration that was asked for.
+2. **Loads shorter than a window.** On loopback a page arrives in a few
+   milliseconds, so an ACTIVE phase contained almost no traffic and was labelled
+   ACTIVE anyway — the labels were noise. The demo origin now paces its body in
+   1 KiB chunks (`chunk_delay_s = 20 ms`) and one ACTIVE phase is a *page view*:
+   up to `experiments.requests_per_load` (default 24) sequential requests with
+   short gaps, stopping when the phase budget is used. A browser fetching a
+   document plus subresources looks like this; a single 4 ms request does not.
+
+Both numbers are configuration, not code: `--loads`, `--idle`, `--repeats` on
+`scripts/demo.py` and the same keys in `config/config.yaml` reproduce a run.
+
+**Records are not packets.** In the lab, one observation is one *record*
+(`cover.record_size`, up to 3932 B), and `analysis/pcap.py` writes and reads
+those sizes faithfully (Ethernet + IPv4/IPv6 headers included, payload up to
+65 535 B). A real tcpdump capture of the same tunnel would instead show MTU-sized
+(≈1448 B) segments carrying slices of the TLS stream. Do not compare lab record
+sizes against interface MTU, and do not read a lab `length` column as "bytes on
+the wire" — the wire here is loopback with a 16 KiB MTU.
+
 ## Configuration A in lab mode
 
 Configuration A is "plain Tor". In the lab there is no Tor to be plain *with*, so

@@ -107,31 +107,40 @@ def run_comparison(
     loads: int | None = None,
     out_dir: Path | str | None = None,
     use_lab: bool = True,
+    repeats: int = 1,
 ) -> Comparison:
-    """Run each configuration once on the same timeline."""
+    """Run each configuration ``repeats`` times on the same timeline.
+
+    Repeats differ in the RF/classifier seed and in the phase jitter drawn by the
+    replay, so the reported mean/CI describe run-to-run variance rather than one
+    lucky split.
+    """
     cfg = cfg or load_config()
     target = Path(out_dir) if out_dir is not None else Path(cfg.path("paths.experiments"))
     timeline = timeline or timeline_from_config(cfg, loads=loads)
 
     started = time.time()
     comparison_result = Comparison(started_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    base_seed = int(cfg.get_int("analysis.random_seed", 7))
     for configuration in configurations:
         persona = CONFIG_PERSONAS.get(configuration.upper())
-        result = run_experiment(
-            configuration,
-            cfg=cfg,
-            timeline=timeline,
-            persona=persona,
-            use_lab=use_lab,
-            out_dir=target,
-        )
-        comparison_result.results.append(result)
-        if result.error:
-            comparison_result.notes.append(f"{configuration}: {result.error}")
-        if result.active_windows == 0 or result.idle_windows == 0:
-            comparison_result.notes.append(
-                f"{configuration}: the run produced no ACTIVE/IDLE split, so no F1 is reported"
+        for repeat in range(max(1, int(repeats))):
+            result = run_experiment(
+                configuration,
+                cfg=cfg,
+                timeline=timeline,
+                persona=persona,
+                use_lab=use_lab,
+                out_dir=target,
+                seed=base_seed + repeat,
             )
+            comparison_result.results.append(result)
+            if result.error:
+                comparison_result.notes.append(f"{configuration}: {result.error}")
+            if result.active_windows == 0 or result.idle_windows == 0:
+                comparison_result.notes.append(
+                    f"{configuration}: no ACTIVE/IDLE split, so no F1 is reported"
+                )
 
     with db_session(Path(cfg.path("paths.sqlite"))) as connection:
         comparison_result.summaries = comparison(connection)
@@ -176,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
         help="comma separated subset, e.g. --configurations C",
     )
     parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="run each configuration N times and aggregate (default 1)",
+    )
+    parser.add_argument(
         "--no-lab",
         action="store_true",
         help="use a real Tor SOCKS port instead of the lab stack",
@@ -191,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         loads=args.loads,
         out_dir=args.out,
         use_lab=not args.no_lab,
+        repeats=max(1, args.repeats),
     )
     print(format_table(result.summaries), flush=True)
     for note in result.notes:

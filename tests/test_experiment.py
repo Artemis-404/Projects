@@ -474,3 +474,32 @@ def test_report_without_data_says_so(tmp_path: Path, cfg: Config) -> None:
     markdown = render(data)
     assert "no runs recorded" in markdown
     assert "cannot be" in markdown
+
+
+def test_replay_jitter_keeps_labels_off_the_grid() -> None:
+    """Phase lengths vary, but the ground truth always matches what happened."""
+    timeline = Timeline(
+        phases=[
+            Phase(kind="load", duration_s=1.0, url="http://a/", label="active"),
+            Phase(kind="idle", duration_s=2.0, label="idle"),
+        ]
+        * 3
+    )
+    outcome = replay(
+        timeline,
+        proxy_host="h",
+        proxy_port=1,
+        fetch_fn=FakeFetcher(),
+        jitter_s=0.4,
+        seed=3,
+    )
+    durations = [row["duration_s"] for row in outcome.phases]
+    assert len(durations) == 6
+    assert all(0.2 <= value <= 2.4 for value in durations)
+    assert any(abs(value - 1.0) > 0.01 for value in durations)
+    # The recorded interval is what the clock actually did.
+    for row in outcome.phases:
+        assert row["t_end"] - row["t_start"] >= row["duration_s"] - 0.05
+
+    fixed = replay(timeline, proxy_host="h", proxy_port=1, fetch_fn=FakeFetcher())
+    assert [row["duration_s"] for row in fixed.phases] == [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]

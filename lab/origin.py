@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -215,6 +216,11 @@ persona-shaped tunnel.</footer>
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "UQABDemoOrigin/1.0"
+    #: Send the body in chunks with a small pause, the way a real site behaves.
+    #: On loopback a page would otherwise arrive in ~4 ms, which makes an ACTIVE
+    #: phase shorter than the 1 s analysis window and the experiment meaningless.
+    chunk_bytes = 1024
+    chunk_delay_s = 0.02
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
@@ -226,7 +232,15 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if body:
-            self.wfile.write(body)
+            self.send_paced(body)
+
+    def send_paced(self, body: bytes) -> None:
+        """Write ``body`` in chunks, pausing between them."""
+        for start in range(0, len(body), max(1, self.chunk_bytes)):
+            self.wfile.write(body[start : start + self.chunk_bytes])
+            self.wfile.flush()
+            if start + self.chunk_bytes < len(body):
+                time.sleep(self.chunk_delay_s)
 
     def log_message(self, fmt: str, *args: object) -> None:
         return None

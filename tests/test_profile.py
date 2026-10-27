@@ -255,3 +255,46 @@ def test_end_to_end_capture_to_persona(tmp_path: Path, limits: Limits) -> None:
     personas = sample_variants(profile, limits, count=2)
     assert all(validate_dict(p.to_dict(), limits).ok for p in personas)
     assert all(p.source == "clearnet" for p in personas)
+
+
+def test_packet_sizes_round_trip_through_pcap(tmp_path: Path) -> None:
+    """A lab observation is one record; sizes must survive the pcap round-trip."""
+    sizes = [64, 155, 512, 1024, 2048, 3932, 8192]
+    frames = [
+        (1000.0 + index, build_packet("10.0.0.2", "10.0.0.9", 40000, BRIDGE_PORT, size - 54))
+        for index, size in enumerate(sizes)
+    ]
+    path = tmp_path / "sizes.pcap"
+    write_pcap(path, frames)
+    assert [packet.length for packet in read_pcap(path)] == sizes
+
+
+def test_ipv6_packets_are_parsed(tmp_path: Path) -> None:
+    """A tcpdump capture may hold IPv6; the reader must not drop it."""
+    import struct
+
+    def ipv6_frame(payload: int) -> bytes:
+        src = bytes.fromhex("20010db8000000000000000000000001")
+        dst = bytes.fromhex("20010db8000000000000000000000002")
+        tcp = struct.pack("!HHIIHHHH", 40000, BRIDGE_PORT, 1, 0, 5 << 12, 0x18, 8192, 0)
+        ipv6 = (
+            struct.pack("!IHBB", 0x60000000, len(tcp) + payload, 6, 64) + src + dst
+        )
+        ethernet = b"\x02\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x02\x86\xdd"
+        return ethernet + ipv6 + tcp + bytes(payload)
+
+    frames = [(1000.0 + index, ipv6_frame(100)) for index in range(3)]
+    path = tmp_path / "v6.pcap"
+    write_pcap(path, frames)
+    packets = list(read_pcap(path))
+    assert len(packets) == 3
+    assert packets[0].src.startswith("2001")
+    assert packets[0].dport == BRIDGE_PORT
+    assert packets[0].length == 14 + 40 + 20 + 100
+
+
+def test_bad_magic_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "bad.pcap"
+    path.write_bytes(b"NOTPCAP!" + b"\x00" * 64)
+    with pytest.raises(ValueError):
+        list(read_pcap(path))

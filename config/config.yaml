@@ -77,6 +77,9 @@ experiments:
   loads_per_site: 30       # total page loads shared across the site list
   load_s: 1                # dwell time on an ACTIVE (loading) phase
   idle_s: 3                # dwell time on a following IDLE phase
+  requests_per_load: 24   # cap only: one ACTIVE phase keeps loading until done
+  jitter_s: 400            # ms of random jitter on every phase, so labels never
+                           # align with the 1 s feature grid (a lab artefact)
   sites:
     - http://demo.uqab/
     - http://demo.uqab/news

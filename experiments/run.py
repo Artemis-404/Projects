@@ -87,8 +87,9 @@ class RunResult:
 
 
 def make_run_id(configuration: str, persona: str) -> str:
+    """Unique per run: repeats of A/B/C can start inside the same second."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    return f"{stamp}-{configuration}-{persona}"
+    return f"{stamp}-{time.time_ns() % 1_000_000_000:09d}-{configuration}-{persona}"
 
 
 def config_for(name: str) -> tuple[str | None, str]:
@@ -151,6 +152,9 @@ def _drive_lab(
     *,
     socks_port: int,
     offsets: dict[str, int],
+    jitter_s: float = 0.0,
+    seed: int = 7,
+    requests_per_load: int = 1,
 ) -> tuple[Any, list[LoadResult], list[dict[str, Any]], float, float]:
     """Start the lab stack, replay the timeline, stop the stack."""
 
@@ -165,6 +169,9 @@ def _drive_lab(
                 timeline,
                 proxy_host="127.0.0.1",
                 proxy_port=stack.socks_port,
+                jitter_s=jitter_s,
+                seed=seed,
+                requests_per_load=requests_per_load,
             )
         finally:
             await stack.stop()
@@ -242,6 +249,7 @@ def run_experiment(
     out_dir: Path | str | None = None,
     evaluate_after: bool = True,
     folds: int | None = None,
+    seed: int | None = None,
 ) -> RunResult:
     """Run one configuration on one persona and persist the results."""
     cfg = cfg or load_config()
@@ -254,6 +262,9 @@ def run_experiment(
     run_dir.mkdir(parents=True, exist_ok=True)
 
     timeline = timeline or timeline_from_config(cfg)
+    jitter_s = float(cfg.get_int("experiments.jitter_s", 400) or 0) / 1000.0
+    seed = int(cfg.get_int("analysis.random_seed", 7) if seed is None else seed)
+    requests_per_load = max(1, cfg.get_int("experiments.requests_per_load", 24))
     logs = cfg.path("paths.run") / "logs"
     plain_run = use_lab and default_persona is None and persona is None
     offsets = {
@@ -274,12 +285,22 @@ def run_experiment(
                 timeline,
                 socks_port=socks_port,
                 offsets=offsets,
+                jitter_s=jitter_s,
+                seed=seed,
+                requests_per_load=requests_per_load,
             )
         else:
             port = socks_port or int(cfg.get_int("tor.socks_port", 9150))
             if not port_open(socks_host, port, wait_s=30.0):
                 raise ExperimentError(f"no SOCKS proxy on {socks_host}:{port}; is Tor running?")
-            outcome = replay(timeline, proxy_host=socks_host, proxy_port=port)
+            outcome = replay(
+                timeline,
+                proxy_host=socks_host,
+                proxy_port=port,
+                jitter_s=jitter_s,
+                seed=seed,
+                requests_per_load=requests_per_load,
+            )
             loads, phases = outcome.loads, outcome.phases
             t0, started_wall = outcome.started_mono, outcome.started_wall
     except Exception as exc:
@@ -332,7 +353,7 @@ def run_experiment(
             evaluation = evaluate(
                 windows,
                 folds=folds or int(cfg.get_int("analysis.cv_folds", 5)),
-                seed=int(cfg.get_int("analysis.random_seed", 7)),
+                seed=seed,
                 bootstrap=int(cfg.get_int("analysis.bootstrap", 1000)),
             )
         except Exception as exc:  # noqa: BLE001 - recorded, not fatal

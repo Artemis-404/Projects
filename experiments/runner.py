@@ -9,6 +9,7 @@ stores the run in SQLite (SDD 6.3).
 
 from __future__ import annotations
 
+import random
 import socket
 import time
 from collections.abc import Iterable, Sequence
@@ -68,6 +69,7 @@ class LoadResult:
     started: float
     finished: float
     error: str = ""
+    requests: int = 1
 
     def to_row(self) -> dict[str, Any]:
         return {
@@ -77,6 +79,7 @@ class LoadResult:
             "status": self.status,
             "bytes": self.bytes,
             "load_ms": round(self.ms, 3),
+            "requests": self.requests,
             "error": self.error,
         }
 
@@ -185,8 +188,17 @@ def replay(
     should_stop: Any = None,
     sleep: Any = time.sleep,
     clock: Any = time.monotonic,
+    jitter_s: float = 0.0,
+    seed: int = 7,
+    requests_per_load: int = 1,
+    gap_s: float = 0.08,
 ) -> ReplayOutcome:
     """Replay the timeline through the proxy, timing every load.
+
+    One ACTIVE phase is one *page view*: it issues ``requests_per_load``
+    sequential requests (the document plus subresources) spread over the phase,
+    which is both how a real browser behaves and what keeps an ACTIVE interval
+    longer than a single 1 s analysis window.
 
     The returned ``phases`` carry intervals relative to the start of the replay,
     ready to be written as ground truth for the capture.
@@ -197,29 +209,44 @@ def replay(
     start = clock()
     cursor = start
     load_index = 0
+    # Jitter keeps phase boundaries off the 1 s analysis grid. Without it an
+    # observer could separate ACTIVE from IDLE purely by *where* a window sits
+    # relative to a boundary, which is an artefact of a perfectly regular script.
+    rng = random.Random(seed)
     for phase in timeline.phases:
         if should_stop is not None and should_stop():
             break
         phase_start = cursor
+        duration = phase.duration_s
+        if jitter_s > 0:
+            duration = max(0.2, duration + rng.uniform(-jitter_s, jitter_s))
         if phase.kind == "load":
             load_index += 1
             began = clock()
             error = ""
             status = 0
             size = 0
-            try:
-                loaded: PageLoad = fetcher(
-                    phase.url,
-                    proxy_host,
-                    proxy_port,
-                    timeout=max(5.0, phase.duration_s * 5),
-                )
-                status = int(loaded.status)
-                size = int(loaded.bytes_received)
-            except HttpError as exc:
-                error = str(exc)
-            except Exception as exc:  # noqa: BLE001 - the run records any failure
-                error = f"{type(exc).__name__}: {exc}"
+            sent = 0
+            budget = max(1, requests_per_load)
+            while sent < budget:
+                if sent and clock() - phase_start > duration * 0.92:
+                    break
+                try:
+                    loaded: PageLoad = fetcher(
+                        phase.url,
+                        proxy_host,
+                        proxy_port,
+                        timeout=max(5.0, duration * 5),
+                    )
+                    status = int(loaded.status) or status
+                    size += int(loaded.bytes_received)
+                except HttpError as exc:
+                    error = error or str(exc)
+                except Exception as exc:  # noqa: BLE001 - the run records any failure
+                    error = error or f"{type(exc).__name__}: {exc}"
+                sent += 1
+                if sent < budget:
+                    sleep(gap_s * rng.uniform(0.5, 1.5))
             finished = clock()
             loads.append(
                 LoadResult(
@@ -232,18 +259,20 @@ def replay(
                     started=began,
                     finished=finished,
                     error=error,
+                    requests=sent,
                 )
             )
-        # ``duration_s`` is dwell time: the script holds each phase for its full
+        # ``duration`` is dwell time: the script holds each phase for its full
         # length so ACTIVE and IDLE intervals have the length the labels claim.
-        remaining = phase.duration_s - (clock() - phase_start)
+        remaining = duration - (clock() - phase_start)
         if remaining > 0:
             sleep(remaining)
-        cursor = phase_start + phase.duration_s
+        cursor = phase_start + duration
         phase_rows.append(
             {
                 "t_start": round(phase_start - start, 6),
                 "t_end": round(cursor - start, 6),
+                "duration_s": round(duration, 6),
                 "label": phase.label or phase.kind,
                 "site": phase.site,
                 "load_ms": round(loads[-1].ms, 3) if phase.kind == "load" and loads else 0.0,

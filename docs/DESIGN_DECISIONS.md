@@ -157,3 +157,26 @@ running. `GET /tor` reports whether a binary was found, where, and its version;
 the wizard uses it to preselect *Automatic* and to explain the fallback; the
 session badge says *Tor* or *Lab simulation*; every run row records the mode. This
 is the same honesty rule as D15, moved earlier: into setup.
+
+## D19 — The lab protocol is jittered and paced like a browser
+
+A scripted timeline that is perfectly regular measures the script, not the
+transport: phase boundaries land on the 1 s analysis grid and a loopback page
+arrives in fewer milliseconds than a window is wide, which produced identical
+"perfect" F1 scores for A, B and C in early demo runs. Every phase now carries
+`experiments.jitter_s` of uniform jitter (ground truth records the elapsed
+duration), the demo origin paces its body in 1 KiB chunks, and one ACTIVE phase
+is a page view of up to `experiments.requests_per_load` sequential requests that
+stops when the phase budget is used. The labels describe the traffic that really
+happened, and repeated runs (`--repeats`) let the report quote run-to-run
+variance instead of one lucky split.
+
+## D20 — Captures are byte-faithful to records
+
+`analysis/pcap.py` used to clamp a payload to 1400 B and to report the IPv4
+`total_len` as the frame size, so a 3932 B record read back as 1440 B and every
+size feature silently saturated. The writer now takes the full 65 535 B IP
+payload, and the reader returns the frame size (Ethernet + IP + TCP/UDP) for both
+IPv4 and IPv6. A record of *n* bytes round-trips as *n*; `tests/test_profile.py`
+pins sizes from 64 B to 16 KiB. Honest sizes are a precondition for honest
+observability numbers, so this is a correctness fix, not a cosmetic one.
