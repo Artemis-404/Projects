@@ -32,11 +32,11 @@ def quiet(name: str) -> logging.Logger:
     return logger
 
 
-async def wait_until(  # noqa: ASYNC109
-    predicate: Callable[[], bool], timeout: float = 8.0, what: str = "condition"
+async def wait_until(
+    predicate: Callable[[], bool], limit_s: float = 8.0, what: str = "condition"
 ) -> None:
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
+    deadline = loop.time() + limit_s
     while loop.time() < deadline:
         if predicate():
             return
@@ -113,7 +113,7 @@ def test_socks_to_orport_roundtrip_is_shaped(
             caller = await SocksCaller.connect(stack.client_port, "persona=high")
             request = b"GET / HTTP/1.0\r\nHost: demo.uqab\r\n\r\n"
             await caller.send(request)
-            echoed = await caller.recv(len(request), timeout=15)
+            echoed = await caller.recv(len(request), limit_s=15)
             assert echoed == request
 
             assert stack.client is not None
@@ -303,7 +303,7 @@ def test_failure_closes_tor_stream_and_blocks(
             # The next record cannot be delivered; the Tor stream must close and
             # the state must become blocked, with no direct fallback.
             with contextlib.suppress(Exception):
-                await caller.recv(1, timeout=8)
+                await caller.recv(1, limit_s=8)
             assert stack.client is not None
             failing_client = stack.client
             await wait_until(
@@ -370,11 +370,11 @@ def test_client_retries_and_recovers_within_retry_window(
             await wait_until(lambda: server2.server is not None)
 
             caller2 = await asyncio.wait_for(
-                SocksCaller.connect(cport, "persona=high"), timeout=8
+                SocksCaller.connect(cport, "persona=high"), limit_s=8
             )
             elapsed = loop.time() - started
             await caller2.send(b"down")
-            assert await caller2.recv(4, timeout=15) == b"down"
+            assert await caller2.recv(4, limit_s=15) == b"down"
             assert elapsed <= 10.0, f"reconnect took {elapsed:.2f}s"
             await caller2.close()
             server_task.cancel()

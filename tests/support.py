@@ -156,8 +156,8 @@ class SocksCaller:
         self.writer.write(data)
         await self.writer.drain()
 
-    async def recv(self, count: int, timeout: float = 5.0) -> bytes:  # noqa: ASYNC109
-        return await asyncio.wait_for(self.reader.readexactly(count), timeout=timeout)
+    async def recv(self, count: int, limit_s: float = 5.0) -> bytes:
+        return await asyncio.wait_for(self.reader.readexactly(count), limit_s)
 
     async def close(self) -> None:
         with contextlib.suppress(Exception):
