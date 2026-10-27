@@ -20,7 +20,7 @@ jobs:
           - os: windows-latest
             platform: win
             artifact: uqab-windows
-          - os: ubuntu-latest
+          - os: ubuntu-24.04   # NFR-14's Linux target
             platform: linux
             artifact: uqab-linux
     runs-on: ${{ matrix.os }}
@@ -29,20 +29,26 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
 
       - name: Install the engine and dev tools
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,browser]"
+          # Real Chromium for the FR-20 browser-driver test (not shipped in the app).
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            python -m playwright install --with-deps chromium
+          else
+            python -m playwright install chromium
+          fi
 
       # Certificates are gitignored. The build generates a fresh set; ca.key is
       # never staged into the bundle (packaging/manifest.py refuses it).
@@ -70,9 +76,23 @@ jobs:
         run: python packaging/build_installer.py --check
 
       - name: Build the installer
-        run: python packaging/build_installer.py --${{ matrix.platform }}
+        run: |
+          set -o pipefail
+          python packaging/build_installer.py --${{ matrix.platform }} 2>&1 | tee build-output.txt
 
-      - uses: actions/upload-artifact@v4
+      # Logs need a GitHub sign-in; annotations are public. Surface the cause.
+      - name: Report an installer failure
+        if: failure()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("build-output.txt")
+          lines = path.read_text(errors="replace").splitlines()[-25:] if path.exists() else ["no output"]
+          text = "%0A".join(line.replace("%", "%25").replace(chr(13), "") for line in lines)
+          print(f"::error title=installer build failed::{text}")
+          PY
+
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: |
