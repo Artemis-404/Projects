@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uqab.local/schema/persona-v1.json",
+  "title": "UQAB persona v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "source", "floor_slot_ms", "start_state", "states", "transitions"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+    "version": {"type": "integer", "minimum": 1},
+    "source": {"enum": ["static", "llm", "clearnet"]},
+    "description": {"type": "string", "maxLength": 500},
+    "floor_slot_ms": {"type": "integer", "minimum": 1, "maximum": 5000},
+    "start_state": {"type": "string"},
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "record_size", "slot_ms", "duration_s"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+          "record_size": {"type": "integer", "minimum": 3, "maximum": 16384},
+          "slot_ms": {"type": "integer", "minimum": 1},
+          "duration_s": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"type": "number", "exclusiveMinimum": 0}
+          },
+          "burst": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["every_s", "slots", "slot_ms"],
+            "properties": {
+              "every_s": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "number", "exclusiveMinimum": 0}
+              },
+              "slots": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "integer", "minimum": 1}
+              },
+              "slot_ms": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "transitions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+# UQAB configuration (SDD 5.8). One source of truth for every module.
+# Every value below is loaded by config/__init__.py; nothing is hard-coded.
+
+bridge:
+  host: 127.0.0.1          # bridge IP (change to the lab bridge address)
+  pt_port: 9443            # UQAB PT server port, the only port the client reaches
+  fingerprint: ""          # optional bridge identity fingerprint
+  orport_host: 127.0.0.1   # bridge Tor ORPort, where the PT server forwards bytes
+  orport_port: 9001
+
+tor:
+  mode: auto               # auto | external | simulated (lab fallback, clearly labelled)
+  binary: ""               # absolute path to tor(.exe); empty means search PATH
+  socks_port: 9150
+  control_port: 9151
+  bootstrap_timeout_s: 180
+  bridges: []              # bridge lines, e.g. "192.0.2.10:9443 AAAA..."; empty = auto
+
+tls:
+  ca: tunnel/certs/ca.crt
+  cert: tunnel/certs/client.crt
+  key: tunnel/certs/client.key
+  server_cert: tunnel/certs/server.crt
+  server_key: tunnel/certs/server.key
+  hostname: uqab-bridge
+  min_version: TLSv1_3
+
+cover:
+  min_record_size: 64
+  greeting_record_size: 1024
+  min_slot_ms: 10
+  floor_slot_ms: 500
+  max_bytes_per_s: 262144
+  retry_s: 10
+  stats_interval_s: 1
+  queue_bytes: 262144
+
+persona:
+  profiles_dir: persona/profiles
+  default: balanced
+
+pt:
+  bind_host: 127.0.0.1
+  server_bind_host: 0.0.0.0
+  port: 0                 # 0 = ephemeral; the real port is printed in CMETHOD
+  connect_timeout_s: 60   # how long a SOCKS request waits while retrying (FR-09)
+  log_slots: true
+
+llm:
+  url: http://127.0.0.1:11434
+  model: qwen2.5:1.5b
+  timeout_s: 180
+  variants: 3
+  attempts: 3
+  out_dir: persona/profiles/generated
+
+profile:
+  opt_in_flag: data/profile/opt_in.json
+  path: data/profile/profile.json
+  k: 4
+
+app_api:
+  host: 127.0.0.1
+  port: 9170
+  allowed_origin: https://app.uqab
+
+lab:
+  demo_origin_port: 8899
+  enabled: true
+
+dashboard:
+  host: 127.0.0.1
+  port: 8501
+
+experiments:
+  driver: auto             # auto | playwright | http
+  loads_per_site: 30       # total page loads shared across the site list
+  load_s: 2                # dwell time on an ACTIVE phase; >= one window so
+                           # every analysis window is cleanly labelled
+  idle_s: 3                # dwell time on a following IDLE phase
+  requests_per_load: 24   # cap only: one ACTIVE phase keeps loading until done
+  jitter_s: 400            # ms of random jitter on every phase, so labels never
+                           # align with the 1 s feature grid (a lab artefact)
+  sites:
+    - http://demo.uqab/
+    - http://demo.uqab/news
+    - http://demo.uqab/docs
+    - http://demo.uqab/gallery
+    - http://demo.uqab/forum
+    - http://demo.uqab/shop
+    - http://demo.uqab/blog
+    - http://demo.uqab/notes
+    - http://demo.uqab/media
+    - http://demo.uqab/about
+
+analysis:
+  window_s: 1
+  cv_folds: 5
+  random_seed: 7
+  bootstrap: 1000
+
+paths:
+  run: run
+  data: data
+  sqlite: data/uqab.sqlite

@@ -1,0 +1,27 @@
+{
+  "id": "balanced",
+  "version": 1,
+  "source": "static",
+  "description": "Steady reading with occasional bursts (SRS 5.5 example)",
+  "floor_slot_ms": 500,
+  "start_state": "reading",
+  "states": [
+    {
+      "name": "reading",
+      "record_size": 1024,
+      "slot_ms": 100,
+      "duration_s": [30, 120],
+      "burst": {"every_s": [10, 40], "slots": [5, 20], "slot_ms": 40}
+    },
+    {
+      "name": "idle",
+      "record_size": 1024,
+      "slot_ms": 400,
+      "duration_s": [60, 300]
+    }
+  ],
+  "transitions": {
+    "reading": {"reading": 0.3, "idle": 0.7},
+    "idle": {"reading": 1.0}
+  }
+}

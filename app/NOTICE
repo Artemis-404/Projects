@@ -1,0 +1,43 @@
+UQAB desktop application
+=======================
+
+This application's browser shell is derived from Min
+(https://github.com/minbrowser/min), Copyright (c) Min contributors,
+licensed under the Apache License, Version 2.0. A copy of that licence is in
+the file LICENSE in this directory, as required by section 4 of the licence.
+
+What was carried over from Min
+------------------------------
+* the architecture: a single Electron main process that owns windows and tabs,
+  a context-isolated renderer, one <webview> per tab, a tab strip plus address
+  bar, and a local browsing-history store;
+* the interaction model: Ctrl+T / Ctrl+W / Ctrl+L / Ctrl+H, a search-or-address
+  bar, a history drawer and a bookmark toggle;
+* the visual language: a dark, quiet, content-first window with a compact
+  toolbar and no browser chrome beyond what a page needs.
+
+What was NOT carried over (deviation from a literal fork)
+---------------------------------------------------------
+* Min's TypeScript sources and its build pipeline (esbuild/webpack tasks) are not
+  vendored; the shell here is dependency-free CommonJS so the packaged app needs
+  no Node modules at runtime.
+* Min's task manager, tab groups, reading list, update checker and its dozens of
+  third-party dependencies are not included.
+* Min's branding, icons, colour palette and strings are not used. Everything the
+  user sees says UQAB and lives in this repository.
+
+UQAB additions on top of that architecture
+-------------------------------------------
+* the Start/Stop session control (FR-27) and the 1 Hz traffic panel (FR-29);
+* the hard tunnel gate in main.js: tab requests are cancelled unless the engine
+  reports a live session, and the tab session is pinned to the engine's SOCKS5
+  port with loopback bypass disabled (FR-26);
+* WebRTC non-proxied UDP disabled at the Chromium command-line and per webview;
+* the consent flow for clearnet learning (FR-30) and the persona picker (FR-28).
+
+Third-party components distributed with a packaged build
+---------------------------------------------------------
+* Electron and Chromium - MIT-style licences, shipped inside the Electron
+  runtime; their licence files are included by the Electron distribution.
+* CPython - PSF License; the bundled runtime keeps its own LICENSE.txt.
+* Min - Apache License 2.0, as described above.

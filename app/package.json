@@ -1,0 +1,18 @@
+{
+  "name": "uqab",
+  "productName": "UQAB",
+  "version": "1.0.0",
+  "description": "UQAB - a Tor pluggable transport with persona-driven cover traffic",
+  "license": "Apache-2.0",
+  "author": "UQAB project (BS Information Security Engineering)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "lint": "node --check main.js && node --check preload.js"
+  },
+  "devDependencies": {
+    "electron": "43.4.1"
+  }
+}

@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+node_modules/
+dist/
+build/
+!build/icon.png
+app/dist/
+app/out/
+*.egg-info/
+htmlcov/
+.coverage
+# lab-only material (SDD 6.1): never commit certs, captures, profiles, runs
+tunnel/certs/
+data/
+run/
+*.pcap
+*.pcapng
+*.sqlite
+*.sqlite3
+app/out/
+artifacts/

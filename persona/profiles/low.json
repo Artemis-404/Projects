@@ -1,0 +1,27 @@
+{
+  "id": "low",
+  "version": 1,
+  "source": "static",
+  "description": "Low bandwidth: light reading, long idle periods, small records",
+  "floor_slot_ms": 500,
+  "start_state": "reading",
+  "states": [
+    {
+      "name": "reading",
+      "record_size": 512,
+      "slot_ms": 200,
+      "duration_s": [20, 90],
+      "burst": {"every_s": [20, 60], "slots": [3, 8], "slot_ms": 80}
+    },
+    {
+      "name": "idle",
+      "record_size": 512,
+      "slot_ms": 500,
+      "duration_s": [90, 300]
+    }
+  ],
+  "transitions": {
+    "reading": {"reading": 0.4, "idle": 0.6},
+    "idle": {"reading": 0.9, "idle": 0.1}
+  }
+}

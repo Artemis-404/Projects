@@ -1,0 +1,110 @@
+{
+  "appId": "app.uqab.browser",
+  "productName": "UQAB",
+  "copyright": "UQAB project (BS Information Security Engineering)",
+  "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+  "directories": {
+    "app": "../app",
+    "output": "../build/dist",
+    "buildResources": "../build/resources"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "package.json",
+    "src/**/*",
+    "renderer/**/*",
+    "assets/**/*",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "extraResources": [
+    {
+      "from": "../build/engine",
+      "to": "engine"
+    },
+    {
+      "from": "../build/python",
+      "to": "python"
+    },
+    {
+      "from": "../README.md",
+      "to": "README.md"
+    }
+  ],
+  "asar": true,
+  "compression": "maximum",
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "../app/assets/icon.ico",
+    "publisherName": "UQAB",
+    "artifactName": "UQAB-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "UQAB",
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": true,
+    "installerIcon": "../app/assets/icon.ico",
+    "uninstallerIcon": "../app/assets/icon.ico",
+    "license": "../LICENSE"
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "deb",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "../build/resources/icon.png",
+    "category": "Network",
+    "synopsis": "Tor pluggable transport with persona-driven cover traffic",
+    "description": "UQAB carries real traffic inside fixed-size cover records on a persona timetable, so an observer cannot tell browsing from idling. Includes a Tor-free lab simulation so it works out of the box.",
+    "desktop": {
+      "entry": {
+        "Name": "UQAB",
+        "Comment": "Private browsing with persona-driven cover traffic",
+        "Keywords": "tor;privacy;browser;cover traffic;pluggable transport;",
+        "StartupWMClass": "UQAB"
+      }
+    },
+    "maintainer": "UQAB project <uqab@localhost>",
+    "executableName": "uqab"
+  },
+  "deb": {
+    "depends": [
+      "libgtk-3-0",
+      "libnotify4",
+      "libnss3",
+      "libxss1",
+      "libxtst6",
+      "xdg-utils",
+      "libatspi2.0-0",
+      "libappindicator3-1"
+    ]
+  },
+  "appImage": {
+    "license": "../LICENSE"
+  },
+  "publish": null
+}

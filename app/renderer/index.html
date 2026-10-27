@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>UQAB</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand" title="UQAB - persona-driven cover traffic">
+        <span class="mark">UQAB</span>
+      </div>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <button class="icon-btn" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">+</button>
+      <div class="window-tools">
+        <button class="icon-btn" id="open-dashboard" title="Open the evaluation dashboard" aria-label="Dashboard">&#9636;</button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <button class="icon-btn" id="back" title="Back (Alt+Left)" aria-label="Back">&#8592;</button>
+      <button class="icon-btn" id="forward" title="Forward (Alt+Right)" aria-label="Forward">&#8594;</button>
+      <button class="icon-btn" id="reload" title="Reload (Ctrl+R)" aria-label="Reload">&#8635;</button>
+      <form class="address" id="address-form" autocomplete="off">
+        <span class="lock" id="lock" title="Requests only leave through the tunnel">&#9679;</span>
+        <input id="address" type="text" spellcheck="false" placeholder="Search or enter an address" aria-label="Address bar">
+        <button type="button" class="icon-btn ghost" id="bookmark" title="Bookmark (Ctrl+D)" aria-label="Bookmark">&#9734;</button>
+      </form>
+      <button class="ghost-btn" id="history-toggle" title="History (Ctrl+H)">History</button>
+    </div>
+
+    <main class="content">
+      <section class="viewport" id="viewport" aria-live="polite">
+        <div class="blocked" id="blocked">
+          <div class="blocked-inner">
+            <h2>Nothing can leave this machine yet</h2>
+            <p>
+              UQAB routes every page through its own SOCKS5 tunnel. Start a session from the
+              panel on the right: the address bar unlocks only when the tunnel reports
+              <strong>Protected</strong>.
+            </p>
+            <button class="primary" id="blocked-start">Start session</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel" id="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Session</div>
+            <div class="state" id="state-pill" data-tone="idle">Disconnected</div>
+          </div>
+          <span class="badge" id="mode-badge" hidden></span>
+        </div>
+
+        <div class="progress" id="bootstrap-wrap" hidden>
+          <div class="progress-bar"><span id="bootstrap-bar" style="width:0%"></span></div>
+          <div class="muted small"><span id="bootstrap-text">starting</span></div>
+        </div>
+
+        <label class="field">
+          <span>Persona</span>
+          <select id="persona" aria-label="Persona"></select>
+        </label>
+        <div class="muted small" id="persona-hint">Chosen when the session starts.</div>
+
+        <button class="primary wide" id="toggle">Start</button>
+        <div class="muted small" id="session-detail"></div>
+
+        <div class="counters">
+          <div class="counter">
+            <div class="label">Real traffic</div>
+            <div class="value"><span id="real-down">0 B</span><span class="unit">down</span></div>
+            <div class="muted small"><span id="real-up">0 B</span> up</div>
+          </div>
+          <div class="counter">
+            <div class="label">Cover traffic</div>
+            <div class="value"><span id="cover-down">0 B</span><span class="unit">down</span></div>
+            <div class="muted small"><span id="cover-up">0 B</span> up</div>
+          </div>
+          <div class="counter">
+            <div class="label">Overhead</div>
+            <div class="value" id="overhead">-</div>
+            <div class="muted small">period <span id="period">-</span></div>
+          </div>
+          <div class="counter">
+            <div class="label">Uptime</div>
+            <div class="value" id="uptime">0:00</div>
+            <div class="muted small">1 Hz live panel</div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <details class="consent" id="consent-box">
+          <summary>Clearnet learning <span class="pill off" id="consent-pill">off</span></summary>
+          <p class="muted small" id="consent-text">
+            Off by default. UQAB learns a persona from a capture you provide only if you
+            opt in here; the raw capture is deleted after the aggregates are extracted.
+          </p>
+          <div class="row">
+            <button class="ghost-btn" id="consent-accept">Opt in</button>
+            <button class="ghost-btn danger" id="consent-withdraw">Withdraw &amp; delete</button>
+          </div>
+          <p class="muted small" id="consent-meta"></p>
+        </details>
+
+        <div class="divider"></div>
+        <button class="ghost-btn wide" id="open-setup">Setup: connection &amp; Tor</button>
+        <p class="muted small" id="setup-summary">not configured yet</p>
+        <div class="divider"></div>
+        <div class="muted small" id="app-meta">UQAB</div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="drawer" id="history" hidden>
+    <div class="drawer-head">
+      <h3>History</h3>
+      <div class="row">
+        <input id="history-search" type="search" placeholder="Search history" aria-label="Search history">
+        <button class="ghost-btn danger" id="history-clear">Clear</button>
+        <button class="icon-btn" id="history-close" aria-label="Close history">&#10005;</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="history-list"></div>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">Clearnet learning</h2>
+      <pre class="consent-text" id="modal-text"></pre>
+      <p class="muted small">
+        Nothing is uploaded. If you accept, you may later withdraw, which deletes the
+        learned profile from this machine.
+      </p>
+      <div class="row end">
+        <button class="ghost-btn" id="modal-cancel">Not now</button>
+        <button class="primary" id="modal-accept">I understand, opt in</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wizard" id="wizard" hidden>
+    <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+      <div class="wizard-head">
+        <div class="brand"><span class="mark">UQAB</span></div>
+        <h2 id="wizard-title">Set up UQAB</h2>
+        <p class="muted" id="wizard-sub">
+          Three short steps. UQAB starts working out of the box - Tor is optional.
+        </p>
+        <div class="dots" id="wizard-dots">
+          <span class="dot active"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+      </div>
+
+      <section class="wizard-body" data-step="1">
+        <h3>How should UQAB reach the network?</h3>
+        <div class="choice">
+          <label class="choice-card">
+            <input type="radio" name="mode" value="auto" checked>
+            <div>
+              <strong>Automatic</strong>
+              <p class="muted small">Use Tor when it is installed. If it is not, UQAB runs its
+                own lab simulation so everything still works.</p>
+            </div>
+          </label>
+          <label class="choice-card">
+            <input type="radio" name="mode" value="external">
+            <div>
+              <strong>Use my Tor</strong>
+              <p class="muted small">Point UQAB at a <code>tor</code> binary you already have.</p>
+            </div>
+          </label>
+          <label class="choice-card">
+            <input type="radio" name="mode" value="simulated">
+            <div>
+              <strong>Lab simulation</strong>
+              <p class="muted small">No Tor at all: a demo stack on this machine. Clearly
+                labelled in the app.</p>
+            </div>
+          </label>
+        </div>
+
+        <div class="detect" id="tor-detect">
+          <div class="row">
+            <span class="pill" id="tor-pill">checking</span>
+            <span class="small" id="tor-text">looking for a Tor binary...</span>
+          </div>
+        </div>
+
+        <div class="field" id="tor-binary-field" hidden>
+          <span>Tor binary</span>
+          <div class="row">
+            <input type="text" id="tor-binary" placeholder="C:\Program Files\Tor\tor.exe">
+            <button class="ghost-btn" id="tor-browse">Browse...</button>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <label class="field">
+            <span>SOCKS port</span>
+            <input type="number" id="socks-port" min="1024" max="65535" value="9150">
+          </label>
+          <label class="field">
+            <span>Default persona</span>
+            <select id="setup-persona"></select>
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced: bridges</summary>
+          <p class="muted small">
+            One bridge per line, exactly as your bridge provider gave it. Leave empty for a
+            normal Tor connection.
+          </p>
+          <textarea id="bridges" rows="3" placeholder="192.0.2.10:9443 AAAA..."></textarea>
+        </details>
+      </section>
+
+      <section class="wizard-body" data-step="2" hidden>
+        <h3>Personas and privacy</h3>
+        <p class="muted">
+          A persona is the cover-traffic schedule UQAB follows. You can pick a different one
+          for every session, and generate your own from a local model later.
+        </p>
+        <div class="card quiet">
+          <div class="row spread">
+            <div>
+              <strong>Clearnet learning</strong>
+              <p class="muted small">Off unless you opt in. Learns a persona from a capture
+                you supply, deletes the capture, stores aggregates only.</p>
+            </div>
+            <span class="pill off" id="wizard-consent-pill">off</span>
+          </div>
+        </div>
+        <label class="checkline">
+          <input type="checkbox" id="start-with-windows">
+          <span>Start UQAB when I sign in to this computer</span>
+        </label>
+        <p class="muted small">
+          UQAB never sends telemetry. The only network traffic it makes on its own is the one
+          you start with the Start button.
+        </p>
+      </section>
+
+      <section class="wizard-body" data-step="3" hidden>
+        <h3>Ready</h3>
+        <div class="card quiet">
+          <dl class="summary">
+            <dt>Connection</dt><dd id="sum-mode">-</dd>
+            <dt>SOCKS port</dt><dd id="sum-port">-</dd>
+            <dt>Persona</dt><dd id="sum-persona">-</dd>
+            <dt>Bridges</dt><dd id="sum-bridges">none</dd>
+          </dl>
+        </div>
+        <p class="muted small">
+          Pressing Finish saves this and restarts the engine. You can reopen Setup from the
+          panel at any time; nothing here is permanent.
+        </p>
+        <p class="small error" id="wizard-error" hidden></p>
+      </section>
+
+      <div class="wizard-foot">
+        <button class="ghost-btn" id="wizard-back" disabled>Back</button>
+        <div class="row end">
+          <button class="ghost-btn" id="wizard-skip">Skip for now</button>
+          <button class="primary" id="wizard-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
