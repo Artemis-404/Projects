@@ -16,10 +16,12 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -30,6 +32,7 @@ from app_api.engine import (
     EngineBusy,
     UnknownPersona,
 )
+from app_api.tor_control import describe_tor
 from config import Config, ConfigError, load_config
 from logs import setup_logging
 from tunnel.certs import CertPaths, ensure
@@ -165,6 +168,25 @@ class ControlAPI:
                 return HTTPStatus.OK, {**state.to_dict(), "profile_deleted": True}
         if route == "/mode" and method == "GET":
             return HTTPStatus.OK, {"mode": self.cfg.get_str("tor.mode", "auto")}
+        if route == "/tor" and method == "GET":
+            # The setup screen asks this to decide what to offer a new user.
+            return HTTPStatus.OK, describe_tor(self.cfg)
+        if route == "/setup" and method == "GET":
+            return HTTPStatus.OK, {
+                "tor": describe_tor(self.cfg),
+                "mode": self.cfg.get_str("tor.mode", "auto"),
+                "socks_port": self.cfg.get_int("tor.socks_port", 9150),
+                "bridge": {
+                    "host": self.cfg.get_str("bridge.host", "127.0.0.1"),
+                    "port": self.cfg.get_int("bridge.pt_port", 9443),
+                },
+                "persona_default": self.cfg.get_str("persona.default", "balanced"),
+                "llm": {
+                    "url": self.cfg.get_str("llm.url", ""),
+                    "model": self.cfg.get_str("llm.model", ""),
+                },
+                "config_path": str(getattr(self.cfg, "source", "") or ""),
+            }
         return HTTPStatus.NOT_FOUND, {"error": "not_found", "detail": f"no route for {method} {route}"}
 
 
@@ -304,6 +326,35 @@ def serve(
     return 0
 
 
+def parse_assignments(pairs: list[str]) -> dict[str, object]:
+    """Parse ``key=value`` overrides; values are read as JSON when possible.
+
+    ``tor.bridges=["h:1 fp"]`` becomes a list, ``tor.socks_port=9150`` becomes an
+    int, ``tor.binary=C:/tor/tor.exe`` stays a string. This is the only channel the
+    GUI needs to change engine settings, so it accepts exactly what the settings
+    screen can produce.
+    """
+    overrides: dict[str, object] = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise ValueError(f"override {pair!r} is not key=value")
+        try:
+            overrides[key] = json.loads(raw)
+        except ValueError:
+            overrides[key] = raw
+    return overrides
+
+
+def load_settings_file(path: Path) -> dict[str, object]:
+    """Read a JSON object of dotted overrides written by the desktop app."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("settings file must contain a JSON object")
+    return {str(key): value for key, value in payload.items()}
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -311,9 +362,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=None)
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument(
+        "--settings",
+        default=None,
+        help="JSON file of dotted overrides written by the desktop app",
+    )
+    parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="dotted configuration override, repeatable",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+    overrides: dict[str, object] = {}
+    if args.settings:
+        try:
+            overrides.update(load_settings_file(Path(args.settings)))
+        except (OSError, ValueError) as exc:
+            print(f"uqab: cannot read settings file: {exc}", file=sys.stderr)
+            return 2
+    try:
+        overrides.update(parse_assignments(args.override))
+    except ValueError as exc:
+        print(f"uqab: {exc}", file=sys.stderr)
+        return 2
+    if overrides:
+        cfg = cfg.with_overrides(**overrides)
     log = setup_logging(
         "api", cfg.path("paths.run") / "logs", level=10 if args.debug else 20
     )

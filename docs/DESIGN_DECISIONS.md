@@ -128,3 +128,32 @@ The app never pretends to be using Tor when it is not. `run/lab.json` and the
 stats file carry `mode: "simulated"`, the panel shows a "Lab simulation" badge,
 and every experiment row is marked with its configuration letter so a report
 reader can tell which numbers came from the lab.
+
+## D16 — Installers for both platforms, not one portable folder
+
+The phase plan asked for "a Windows artifact". Real use needs an installable app:
+the Windows build is an NSIS setup (`perMachine: false`, no elevation) and Linux
+gets an AppImage plus a `.deb`, all produced by electron-builder from
+`packaging/electron-builder.json`. The portable zip is kept as a third artifact
+because it is the fastest way to demo the app on a locked-down machine. Both
+builders copy the engine and the Python runtime through the same manifest, so the
+three artifacts cannot disagree about what the app is.
+
+## D17 — Settings live in the app, not in config.yaml
+
+The end user never edits YAML. The first-run wizard writes `settings.json` in the
+user-data directory; `app/src/settings.js` turns it into dotted overrides
+(`tor.mode`, `tor.binary`, `tor.socks_port`, `tor.bridges`, `persona.default`,
+`llm.url`, `llm.model`); the main process starts the control API with
+`--settings <file>`; `app_api/server.py` applies them with `Config.with_overrides`
+and hands the *effective* configuration to every child process. Saving a setting
+restarts the engine and re-gates the tabs, so there is never a half-applied state.
+`config/config.yaml` remains the shipped default that the wizard starts from.
+
+## D18 — Tor is optional but always reported
+
+No user has to install Tor to try UQAB, and no user is ever misled about what is
+running. `GET /tor` reports whether a binary was found, where, and its version;
+the wizard uses it to preselect *Automatic* and to explain the fallback; the
+session badge says *Tor* or *Lab simulation*; every run row records the mode. This
+is the same honesty rule as D15, moved earlier: into setup.

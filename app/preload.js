@@ -47,6 +47,12 @@ contextBridge.exposeInMainWorld('uqab', {
     bookmarks: () => invoke('history:bookmarks'),
     toggleBookmark: (url, title) => invoke('history:toggleBookmark', { url, title }),
   },
+  settings: {
+    get: () => invoke('settings:get'),
+    save: (settings) => invoke('settings:save', { settings }),
+    detect: () => invoke('settings:detect'),
+    pickBinary: () => invoke('settings:pickBinary'),
+  },
   app: {
     info: () => invoke('app:info'),
     openExternal: (url) => invoke('app:openExternal', { url }),
@@ -54,7 +60,7 @@ contextBridge.exposeInMainWorld('uqab', {
   },
   /** Main-process push events. Each returns an unsubscribe function. */
   on: (channel, listener) => {
-    const allowed = new Set(['tunnel:state', 'tab:open', 'engine:failure']);
+    const allowed = new Set(['tunnel:state', 'tab:open', 'engine:failure', 'settings:loaded']);
     if (!allowed.has(channel)) return () => {};
     const wrapped = (_event, payload) => listener(payload);
     ipcRenderer.on(channel, wrapped);

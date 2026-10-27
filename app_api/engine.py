@@ -142,7 +142,12 @@ class LabBackend:
             info = self._read_ready()
             if info and info.get("ready"):
                 self.ready = info
-                self.log.info("lab stack ready on socks port %s", info.get("socks_port"))
+                # Adopt the port the stack actually bound (0 means "any free port"),
+                # so the app and the browser route to the real listener.
+                port = info.get("socks_port")
+                if isinstance(port, int) and port > 0:
+                    self.socks_port = port
+                self.log.info("lab stack ready on socks port %s", self.socks_port)
                 return
             await asyncio.sleep(0.1)
         raise TorError("lab stack did not become ready within 90 s")

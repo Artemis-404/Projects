@@ -23,12 +23,35 @@ ACTIVE/IDLE inference, and what it costs.
  lab fallback  no Tor     lab/ (demo origin, mock ORPort, mock Tor)
 ```
 
-## Quick start (Linux / macOS / Windows)
+## Install it
+
+Build the installers from this repository (they are not checked in):
+
+```bash
+python packaging/build_installer.py --win     # build/dist/UQAB-Setup-1.0.0.exe
+python packaging/build_installer.py --linux   # AppImage + .deb
+python packaging/build_portable.py            # or a no-install zip for Windows
+```
+
+* **Windows**: run `UQAB-Setup-<version>.exe`. Per-user install, no admin rights,
+  Start-menu and desktop shortcuts, normal uninstall. The Python engine runtime is
+  bundled, so nothing else needs installing.
+* **Linux**: `chmod +x UQAB-*.AppImage` and run it, or
+  `sudo apt install ./UQAB-*-amd64.deb` and launch UQAB from the application menu.
+* **Portable**: unzip and double-click `UQAB.exe`.
+
+The first start opens a three-step Setup screen: choose how UQAB reaches the
+network (Tor if installed, otherwise the built-in lab simulation), pick a default
+persona, done. Tor, ports and bridges are all configured there — no file editing.
+See `docs/USER_GUIDE.md` and `docs/PACKAGING.md`.
+
+## Quick start (developers)
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e .                                  # stdlib only; no runtime deps
 python -m tunnel.certs                            # one-off mutual-TLS certificates
+python scripts/make_icon.py                       # icon.png + icon.ico
 ```
 
 Open the app (development):
@@ -68,7 +91,8 @@ python -m experiments.report                  # markdown report + CSV appendix
 | `storage/` | SQLite schema and queries (runs, page loads, scores, slot timing) |
 | `dashboard/` | read-only HTML dashboard over the run database (inline SVG charts, no JS) |
 | `app_api/` | control API (`/status`, `/start`, `/stop`, `/personas`, `/consent`, ...), engine supervisor, Tor controller |
-| `app/` | Min-derived Electron browser: tabs, address bar, history, 1 Hz live panel, Start/Stop |
+| `app/` | Min-derived Electron browser: tabs, address bar, history, 1 Hz live panel, Start/Stop, first-run Setup wizard, settings → engine overrides |
+| `packaging/` | portable bundle, Windows NSIS installer, Linux AppImage/deb, layout manifest and verifiers |
 | `lab/` | Tor-free simulation stack for demonstrations and tests (see `docs/LAB_MODE.md`) |
 
 ## Tests
@@ -91,7 +115,10 @@ the dashboard routes and the packaging layout.
   in, the SDD (D1–D12 plus the implementation notes).
 * `docs/LAB_MODE.md` — exactly what lab simulation does and does not prove.
 * `docs/REPORT.md` — the report skeleton with the tables the experiment produces.
-* `docs/PACKAGING.md` — how the portable Windows artifact is assembled.
+* `docs/PACKAGING.md` — installers (Windows `.exe`, Linux AppImage/deb), portable
+  bundle, and how GUI settings reach the engine.
+* `docs/USER_GUIDE.md` — the end-user guide: install, setup, everyday use,
+  troubleshooting.
 
 ## Licensing
 

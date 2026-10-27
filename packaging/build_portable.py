@@ -35,6 +35,14 @@ Usage::
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
+# Allow `python packaging/<script>.py` as well as `python -m packaging.<script>`:
+# without this, "packaging" would resolve to the PyPI package of the same name.
+if __package__ in (None, ""):
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+
 import argparse
 import json
 import os

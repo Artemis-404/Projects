@@ -15,7 +15,7 @@ import pytest
 from app_api.consent import CONSENT_TEXT_VERSION, ConsentStore
 from app_api.engine import Engine, EngineBusy, UnknownPersona
 from app_api.server import ApiServer, ControlAPI, EngineRunner
-from config import Config
+from config import Config, load_config
 from experiments.socks_http import fetch
 from tests.conftest import run
 from tests.support import free_port
@@ -237,3 +237,106 @@ def test_engine_writes_effective_config_for_children(cfg: Config) -> None:
     assert str(cfg.path("paths.run")) in text
     assert "profiles_dir" in text
     assert Path(engine.stats_path).name == "stats.json"
+
+
+# ------------------------------------------------------------------- setup API
+
+
+def test_tor_endpoint_reports_detection(
+    api: tuple[Engine, EngineRunner, ControlAPI],
+) -> None:
+    _engine, _runner, control = api
+    status, body = call(control, "GET", "/tor")
+    assert status == 200
+    assert "found" in body and "hint" in body
+    assert body["found"] is False or isinstance(body["path"], str)
+
+
+def test_setup_endpoint_summarises_effective_config(
+    cfg: Config, api: tuple[Engine, EngineRunner, ControlAPI]
+) -> None:
+    _engine, _runner, control = api
+    status, body = call(control, "GET", "/setup")
+    assert status == 200
+    assert body["socks_port"] > 0
+    assert body["bridge"]["port"] == cfg.get_int("bridge.pt_port", 9443)
+    assert body["persona_default"]
+    assert body["tor"]["platform"] in {"windows", "posix"}
+
+
+def test_parse_assignments_handles_types() -> None:
+    from app_api.server import parse_assignments
+
+    parsed = parse_assignments(
+        [
+            "tor.mode=external",
+            "tor.socks_port=9150",
+            "tor.bridges=[\"192.0.2.1:9443 abc\"]",
+            "llm.variants=2",
+            "tor.binary=C:/Tor/tor.exe",
+        ]
+    )
+    assert parsed["tor.mode"] == "external"
+    assert parsed["tor.socks_port"] == 9150
+    assert parsed["tor.bridges"] == ["192.0.2.1:9443 abc"]
+    assert parsed["llm.variants"] == 2
+    assert parsed["tor.binary"] == "C:/Tor/tor.exe"
+    with pytest.raises(ValueError):
+        parse_assignments(["nonsense"])
+
+
+def test_settings_file_and_cli_overrides_apply(tmp_path: Path) -> None:
+    from app_api.server import load_settings_file
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        '{"tor.mode": "external", "tor.socks_port": 9511, "persona.default": "high"}',
+        encoding="utf-8",
+    )
+    assert load_settings_file(settings)["tor.socks_port"] == 9511
+
+    cfg = load_config()
+    merged = cfg.with_overrides(**load_settings_file(settings))
+    assert merged.get_str("tor.mode") == "external"
+    assert merged.get_int("tor.socks_port") == 9511
+    assert merged.get_str("persona.default") == "high"
+
+    bad = tmp_path / "bad.json"
+    bad.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_settings_file(bad)
+
+
+def test_gui_mode_can_start_a_lab_session_with_overrides(cfg: Config, tmp_path: Path) -> None:
+    """The setup screen's defaults (auto mode) must produce a working session."""
+    from app_api.engine import Engine
+    from app_api.server import ControlAPI, EngineRunner
+
+    settings = {"tor.mode": "simulated", "tor.socks_port": 0, "persona.default": "constant"}
+    merged = cfg.with_overrides(**settings, **{"paths.run": str(tmp_path / "run2")})
+    engine = Engine(merged)
+    runner = EngineRunner(engine)
+    runner.start()
+    api = ControlAPI(engine, runner, merged)
+    try:
+        status, body = api.handle(
+            "POST", "/start", {"persona": "constant"}, origin=merged.get_str("app_api.allowed_origin")
+        )
+        assert status == 202
+        deadline = time.time() + 40
+        state = body.get("state")
+        while time.time() < deadline:
+            _, status_body = api.handle(
+                "GET", "/status", None, origin=merged.get_str("app_api.allowed_origin")
+            )
+            state = status_body.get("state")
+            if state in {"connected", "blocked"}:
+                break
+            time.sleep(0.5)
+        assert state in {"connected", "blocked"}
+        if state == "connected":
+            assert status_body["mode"] == "simulated"
+            assert status_body["socks_port"] > 0
+        api.handle("POST", "/stop", {}, origin=merged.get_str("app_api.allowed_origin"))
+    finally:
+        runner.shutdown()

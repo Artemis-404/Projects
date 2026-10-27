@@ -15,7 +15,7 @@
  * what was and was not carried over.
  */
 
-const { app, BrowserWindow, ipcMain, session, shell, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, shell, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -23,6 +23,7 @@ const { ControlAPI } = require('./src/api');
 const { EngineManager } = require('./src/engine');
 const { HistoryStore } = require('./src/history');
 const { toUrl, isActive } = require('./src/format');
+const settingsStore = require('./src/settings');
 
 const APP_ORIGIN = 'https://app.uqab';
 const TAB_PARTITION = 'persist:uqab-tabs';
@@ -34,6 +35,8 @@ function resolveRoot() {
   const appPath = app.getAppPath();
   const candidates = [
     process.env.UQAB_ROOT,
+    // Installer layout: resources/engine next to app.asar.
+    path.join(process.resourcesPath || '', 'engine'),
     path.join(appPath, 'engine'),
     appPath,
     path.join(path.dirname(appPath), '..', '..'),
@@ -52,11 +55,40 @@ const ROOT = resolveRoot();
 const RESOURCES = process.resourcesPath || path.join(ROOT, 'resources');
 const USER_DATA = app.getPath('userData');
 
-const engine = new EngineManager({
+const SETTINGS_FILE = path.join(USER_DATA, 'settings.json');
+const OVERRIDES_FILE = path.join(USER_DATA, 'engine-settings.json');
+
+/** The user's choices; the setup wizard writes this, the engine reads overrides. */
+let userSettings = settingsStore.load(SETTINGS_FILE);
+
+/** Engine arguments derived from the settings; rebuilt on every restart. */
+function engineArgs() {
+  settingsStore.writeOverrides(OVERRIDES_FILE, userSettings);
+  return ['--settings', OVERRIDES_FILE];
+}
+
+let engine = new EngineManager({
   rootDir: ROOT,
   resourcesPath: fs.existsSync(path.join(RESOURCES, 'python')) ? RESOURCES : '',
+  extraArgs: engineArgs(),
   log: (line) => console.log(`[engine] ${line}`),
 });
+
+/** Restart the control API so a settings change takes effect. */
+async function restartEngine() {
+  await engine.stop();
+  engine = new EngineManager({
+    rootDir: ROOT,
+    resourcesPath: fs.existsSync(path.join(RESOURCES, 'python')) ? RESOURCES : '',
+    extraArgs: engineArgs(),
+    log: (line) => console.log(`[engine] ${line}`),
+  });
+  await onTunnelDown('restarting the engine');
+  const api = await engine.ensureStarted();
+  const status = await api.status();
+  await setTunnel(status);
+  return status;
+}
 
 let historyStore = null;
 let mainWindow = null;
@@ -94,6 +126,17 @@ async function setTunnel(status) {
     mainWindow.webContents.send('tunnel:state', { ...tunnel });
   }
   return { ...tunnel };
+}
+
+/** Close the gate (used when the engine stops or restarts). */
+async function onTunnelDown(reason) {
+  tunnel.active = false;
+  tunnel.socksPort = 0;
+  tunnel.state = 'stopped';
+  await applyProxy(0);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tunnel:state', { ...tunnel, reason });
+  }
 }
 
 function wireTabSession() {
@@ -302,6 +345,60 @@ function registerIpc() {
   );
 
   ipcMain.handle(
+    'settings:get',
+    wrap(async () => ({
+      settings: userSettings,
+      defaults: settingsStore.DEFAULTS,
+      modes: settingsStore.MODE_LABELS,
+    })),
+  );
+
+  ipcMain.handle(
+    'settings:save',
+    wrap(async (payload) => {
+      const incoming = (payload && payload.settings) || {};
+      const check = settingsStore.validate(incoming);
+      if (!check.ok) throw new Error(check.errors.join(' '));
+      const next = settingsStore.save(SETTINGS_FILE, { ...incoming, completed: true });
+      userSettings = next;
+      const status = await restartEngine();
+      let tor = null;
+      try {
+        tor = (await engine.api.request('GET', '/tor')).body;
+      } catch {
+        tor = null;
+      }
+      return { settings: next, status, tor };
+    }),
+  );
+
+  ipcMain.handle(
+    'settings:detect',
+    wrap(async () => {
+      if (!engine.api) await engine.ensureStarted();
+      const tor = (await engine.api.request('GET', '/tor')).body;
+      const setup = (await engine.api.request('GET', '/setup')).body;
+      return { tor, setup };
+    }),
+  );
+
+  ipcMain.handle(
+    'settings:pickBinary',
+    wrap(async () => {
+      const isWindows = process.platform === 'win32';
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: 'Choose your Tor binary',
+        properties: ['openFile'],
+        filters: isWindows
+          ? [{ name: 'Tor', extensions: ['exe'] }]
+          : [{ name: 'Executables', extensions: ['*'] }],
+      });
+      if (result.canceled || !result.filePaths.length) return '';
+      return result.filePaths[0];
+    }),
+  );
+
+  ipcMain.handle(
     'app:info',
     wrap(async () => ({
       version: app.getVersion(),
@@ -361,6 +458,9 @@ if (!gotLock) {
       await engine.ensureStarted();
       const status = await engine.api.status();
       await setTunnel(status);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('settings:loaded', { settings: userSettings });
+      }
     } catch (error) {
       console.error('[engine] startup failed:', error.message);
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -383,4 +483,4 @@ if (!gotLock) {
   });
 }
 
-module.exports = { resolveRoot, applyProxy, setTunnel };
+module.exports = { resolveRoot, applyProxy, setTunnel, engineArgs };

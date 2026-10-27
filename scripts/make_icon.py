@@ -13,6 +13,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import io
 import struct
 import zlib
 from pathlib import Path
@@ -96,8 +97,55 @@ def write_png(path: Path, size: int) -> Path:
     return path
 
 
+ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
+
+
+def write_ico(path: Path, sizes: tuple[int, ...] = ICO_SIZES) -> Path:
+    """Write a multi-resolution .ico (PNG-compressed entries, Vista and later)."""
+    images: list[tuple[int, bytes]] = []
+    for size in sizes:
+        buffer = io.BytesIO()
+        _png_bytes(buffer, size)
+        images.append((size, buffer.getvalue()))
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = 6 + 16 * len(images)
+    entries = b""
+    payload = b""
+    for size, data in images:
+        side = 0 if size >= 256 else size
+        entries += struct.pack(
+            "<BBBBHHII", side, side, 0, 0, 1, 32, len(data), offset
+        )
+        offset += len(data)
+        payload += data
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header + entries + payload)
+    return path
+
+
+def _png_bytes(handle: io.BytesIO, size: int) -> None:
+    """Write one RGBA PNG into a file-like object."""
+    raw = render(size)
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
+    handle.write(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Generate the UQAB icon PNG")
+    parser = argparse.ArgumentParser(description="Generate the UQAB icon PNG and ICO")
     parser.add_argument("--size", type=int, default=512)
     parser.add_argument("--out", default=None)
     args = parser.parse_args(argv)
@@ -109,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     for directory in ("app/assets", "build"):
         target = write_png(root / directory / "icon.png", args.size)
         print(f"wrote {target}")
+    ico = write_ico(root / "app" / "assets" / "icon.ico")
+    print(f"wrote {ico}")
     return 0
 
 

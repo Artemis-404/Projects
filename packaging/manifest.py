@@ -128,6 +128,9 @@ a USB stick.
 
 First start
 -----------
+0. UQAB opens a three-step Setup screen. "Automatic" is preselected: it uses Tor
+   if one is installed and otherwise starts the built-in Lab simulation. Tor
+   paths, ports and bridges are set there - you never edit a file.
 1. The window shows "Disconnected". Pick a persona on the right (start with
    "balanced").
 2. Press Start. If Tor is not installed, UQAB starts its own Lab simulation

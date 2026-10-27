@@ -55,6 +55,31 @@ const ui = {
   modalAccept: document.getElementById('modal-accept'),
   modalCancel: document.getElementById('modal-cancel'),
   toast: document.getElementById('toast'),
+  // setup wizard
+  openSetup: document.getElementById('open-setup'),
+  setupSummary: document.getElementById('setup-summary'),
+  wizard: document.getElementById('wizard'),
+  wizardSteps: Array.from(document.querySelectorAll('.wizard-body')),
+  wizardDots: Array.from(document.querySelectorAll('#wizard-dots .dot')),
+  wizardNext: document.getElementById('wizard-next'),
+  wizardBack: document.getElementById('wizard-back'),
+  wizardSkip: document.getElementById('wizard-skip'),
+  wizardError: document.getElementById('wizard-error'),
+  torDetect: document.getElementById('tor-detect'),
+  torPill: document.getElementById('tor-pill'),
+  torText: document.getElementById('tor-text'),
+  torBinaryField: document.getElementById('tor-binary-field'),
+  torBinary: document.getElementById('tor-binary'),
+  torBrowse: document.getElementById('tor-browse'),
+  socksPort: document.getElementById('socks-port'),
+  setupPersona: document.getElementById('setup-persona'),
+  bridges: document.getElementById('bridges'),
+  startWithWindows: document.getElementById('start-with-windows'),
+  consentPillWizard: document.getElementById('wizard-consent-pill'),
+  sumMode: document.getElementById('sum-mode'),
+  sumPort: document.getElementById('sum-port'),
+  sumPersona: document.getElementById('sum-persona'),
+  sumBridges: document.getElementById('sum-bridges'),
 };
 
 const bridge = window.uqab || null;
@@ -99,6 +124,10 @@ const state = {
   tabs: [],
   activeTab: 0,
   consentAccepted: false,
+  wizardStep: 1,
+  settings: null,
+  tor: null,
+  personaIds: [],
 };
 
 // ------------------------------------------------------------------- helpers
@@ -460,13 +489,9 @@ async function loadPersonas() {
     const result = await bridge.api.personas();
     const body = unwrap(result, 'personas are unavailable') || {};
     const ids = Array.isArray(body.personas) ? body.personas : [];
-    ui.persona.innerHTML = '';
-    for (const id of ids) {
-      const option = document.createElement('option');
-      option.value = id;
-      option.textContent = id;
-      ui.persona.appendChild(option);
-    }
+    state.personaIds = ids;
+    fillPersonaSelect(ui.persona, ids);
+    if (ui.setupPersona) fillPersonaSelect(ui.setupPersona, ids);
     if (state.persona) ui.persona.value = state.persona;
     setText(
       ui.personaHint,
@@ -630,6 +655,260 @@ ui.dashboard.addEventListener('click', async () => {
   }
 });
 
+
+// ------------------------------------------------------------- setup wizard
+
+function fillPersonaSelect(select, ids) {
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = '';
+  const list = ids && ids.length ? ids : ['balanced', 'high', 'constant', 'low'];
+  for (const id of list) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = id;
+    select.appendChild(option);
+  }
+  if (previous && list.includes(previous)) select.value = previous;
+}
+
+function selectedMode() {
+  const checked = document.querySelector('input[name="mode"]:checked');
+  return checked ? checked.value : 'auto';
+}
+
+function setMode(mode) {
+  for (const input of document.querySelectorAll('input[name="mode"]')) {
+    input.checked = input.value === mode;
+  }
+  updateModeFields();
+}
+
+function updateModeFields() {
+  const mode = selectedMode();
+  ui.torBinaryField.hidden = mode !== 'external';
+  const tor = state.tor;
+  if (mode === 'simulated') {
+    ui.torPill.textContent = 'simulation';
+    ui.torPill.className = 'pill warn';
+    ui.torText.textContent = 'UQAB will use its own demo stack. No Tor needed.';
+    return;
+  }
+  if (!tor) {
+    ui.torPill.textContent = 'checking';
+    ui.torPill.className = 'pill';
+    ui.torText.textContent = 'looking for a Tor binary...';
+    return;
+  }
+  if (tor.found) {
+    ui.torPill.textContent = 'Tor found';
+    ui.torPill.className = 'pill ok';
+    ui.torText.textContent = `${tor.version || 'Tor'} at ${tor.path}`;
+  } else {
+    ui.torPill.textContent = mode === 'external' ? 'not found' : 'Tor not found';
+    ui.torPill.className = 'pill warn';
+    ui.torText.textContent =
+      mode === 'external'
+        ? 'Choose the tor binary below, or switch to Automatic / Lab simulation.'
+        : 'No Tor on this machine, so UQAB will use its lab simulation.';
+  }
+}
+
+async function detectTor() {
+  if (!bridge || !bridge.settings) return;
+  try {
+    const result = await bridge.settings.detect();
+    const value = unwrap(result, 'Tor detection failed');
+    state.tor = value.tor;
+    if (value.setup && value.setup.persona_default && ui.setupPersona) {
+      ui.setupPersona.value = value.setup.persona_default;
+    }
+  } catch (error) {
+    state.tor = null;
+    ui.torText.textContent = `could not look for Tor: ${error.message}`;
+  }
+  updateModeFields();
+}
+
+function showWizardStep(step) {
+  state.wizardStep = Math.min(3, Math.max(1, step));
+  for (const section of ui.wizardSteps) {
+    section.hidden = Number(section.dataset.step) !== state.wizardStep;
+  }
+  ui.wizardDots.forEach((dot, index) => {
+    dot.classList.toggle('active', index + 1 <= state.wizardStep);
+  });
+  ui.wizardBack.disabled = state.wizardStep === 1;
+  ui.wizardNext.textContent = state.wizardStep === 3 ? 'Finish' : 'Next';
+  ui.wizardError.hidden = true;
+  if (state.wizardStep === 3) renderWizardSummary();
+}
+
+function wizardValues() {
+  return {
+    mode: selectedMode(),
+    torBinary: ui.torBinary.value.trim(),
+    socksPort: Number(ui.socksPort.value),
+    bridges: ui.bridges.value,
+    persona: ui.setupPersona.value || 'balanced',
+    startWithWindows: ui.startWithWindows.checked,
+    completed: true,
+  };
+}
+
+function renderWizardSummary() {
+  const values = wizardValues();
+  const modeText =
+    values.mode === 'simulated'
+      ? 'Lab simulation (no Tor needed)'
+      : values.mode === 'external'
+        ? `Tor binary: ${values.torBinary || 'not chosen'}`
+        : state.tor && state.tor.found
+          ? `Automatic - uses Tor at ${state.tor.path}`
+          : 'Automatic - Tor not found, lab simulation will be used';
+  setText(ui.sumMode, modeText);
+  setText(ui.sumPort, String(values.socksPort || 9150));
+  setText(ui.sumPersona, values.persona);
+  const bridges = String(values.bridges || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  setText(ui.sumBridges, bridges.length ? `${bridges.length} configured` : 'none');
+}
+
+function openWizard() {
+  if (!bridge) {
+    toast('Settings are only available inside the desktop app.');
+    return;
+  }
+  const settings = state.settings || {};
+  setMode(settings.mode || 'auto');
+  ui.torBinary.value = settings.torBinary || '';
+  ui.socksPort.value = settings.socksPort || 9150;
+  ui.bridges.value = (settings.bridges || []).join('\n');
+  ui.startWithWindows.checked = Boolean(settings.startWithWindows);
+  fillPersonaSelect(ui.setupPersona, state.personaIds);
+  ui.setupPersona.value = settings.persona || state.persona || 'balanced';
+  ui.wizard.hidden = false;
+  showWizardStep(1);
+  detectTor();
+}
+
+function closeWizard() {
+  ui.wizard.hidden = true;
+  ui.wizardError.hidden = true;
+}
+
+async function saveWizard() {
+  const values = wizardValues();
+  ui.wizardNext.disabled = true;
+  ui.wizardError.hidden = true;
+  try {
+    const result = await bridge.settings.save({ ...(state.settings || {}), ...values });
+    const saved = unwrap(result, 'could not save the settings');
+    state.settings = saved.settings;
+    state.tor = saved.tor;
+    renderSetupSummary();
+    renderSession(saved.status);
+    closeWizard();
+    toast('Setup saved. UQAB is ready.', 'good');
+    await loadPersonas();
+  } catch (error) {
+    ui.wizardError.textContent = error.message;
+    ui.wizardError.hidden = false;
+  } finally {
+    ui.wizardNext.disabled = false;
+  }
+}
+
+function renderSetupSummary() {
+  const settings = state.settings;
+  if (!settings) {
+    setText(ui.setupSummary, 'not configured yet');
+    return;
+  }
+  const labels = {
+    auto: 'Automatic',
+    external: 'Your Tor binary',
+    simulated: 'Lab simulation',
+  };
+  let text = labels[settings.mode] || settings.mode;
+  if (settings.mode === 'auto' && state.tor) {
+    text += state.tor.found ? ' (Tor found)' : ' (no Tor, lab mode)';
+  }
+  if (settings.bridges && settings.bridges.length) text += `, ${settings.bridges.length} bridges`;
+  setText(ui.setupSummary, `${text} - SOCKS ${settings.socksPort}, ${settings.persona}`);
+}
+
+async function loadSettings(openOnFirstRun = true) {
+  if (!bridge || !bridge.settings) return;
+  try {
+    const result = await bridge.settings.get();
+    const value = unwrap(result, 'settings are unavailable');
+    state.settings = value.settings;
+    renderSetupSummary();
+    if (openOnFirstRun && value.settings && !value.settings.completed) {
+      openWizard();
+    }
+  } catch (error) {
+    setText(ui.setupSummary, `settings unavailable: ${error.message}`);
+  }
+}
+
+if (ui.openSetup) ui.openSetup.addEventListener('click', openWizard);
+if (ui.wizardNext) {
+  ui.wizardNext.addEventListener('click', () => {
+    if (state.wizardStep === 3) {
+      saveWizard();
+      return;
+    }
+    if (state.wizardStep === 1) {
+      const mode = selectedMode();
+      if (mode === 'external' && !ui.torBinary.value.trim()) {
+        ui.wizardError.textContent = 'Choose your tor binary, or pick Automatic / Lab simulation.';
+        ui.wizardError.hidden = false;
+        return;
+      }
+    }
+    showWizardStep(state.wizardStep + 1);
+  });
+}
+if (ui.wizardBack) ui.wizardBack.addEventListener('click', () => showWizardStep(state.wizardStep - 1));
+if (ui.wizardSkip) {
+  ui.wizardSkip.addEventListener('click', async () => {
+    // "Skip" keeps the defaults and marks setup done, so it never nags again.
+    const defaults = { ...(state.settings || {}), completed: true };
+    try {
+      const result = await bridge.settings.save(defaults);
+      const saved = unwrap(result, 'could not save the defaults');
+      state.settings = saved.settings;
+      state.tor = saved.tor;
+      renderSetupSummary();
+      renderSession(saved.status);
+    } catch (error) {
+      toast(error.message);
+    }
+    closeWizard();
+  });
+}
+for (const input of document.querySelectorAll('input[name="mode"]')) {
+  input.addEventListener('change', updateModeFields);
+}
+if (ui.torBrowse) {
+  ui.torBrowse.addEventListener('click', async () => {
+    try {
+      const result = await bridge.settings.pickBinary();
+      const path = unwrap(result, 'could not open the file picker');
+      if (path) {
+        ui.torBinary.value = path;
+        await detectTor();
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+}
+
 // ---------------------------------------------------------------- keyboard
 
 document.addEventListener('keydown', (event) => {
@@ -667,6 +946,7 @@ async function boot() {
   createTab('about:blank');
   await loadPersonas();
   await refreshStatus();
+  await loadSettings(true);
   try {
     const info = unwrap(await bridge.app.info(), 'app information is unavailable');
     setText(ui.appMeta, `UQAB ${info.version} \u00b7 Electron ${info.electron}`);
@@ -689,6 +969,11 @@ async function boot() {
   });
   bridge.on('tab:open', ({ url }) => {
     if (url) openUrl(url, { newTab: true });
+  });
+  bridge.on('settings:loaded', ({ settings }) => {
+    state.settings = settings;
+    renderSetupSummary();
+    if (!settings.completed) openWizard();
   });
   bridge.on('engine:failure', ({ message }) => {
     toast(`The engine failed to start: ${message}`);

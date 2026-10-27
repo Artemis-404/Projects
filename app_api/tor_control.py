@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,56 @@ def find_tor_binary(cfg: object | None = None, extra_dirs: list[Path] | None = N
             if candidate.is_file():
                 return str(candidate)
     return None
+
+
+def tor_version(binary: str) -> str:
+    """Run ``tor --version`` and return the first line, or an empty string."""
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    first = (result.stdout or result.stderr or "").strip().splitlines()
+    return first[0].strip() if first else ""
+
+
+def describe_tor(cfg: object, extra_dirs: list[Path] | None = None) -> dict[str, object]:
+    """Everything the setup screen needs to know about the local Tor.
+
+    The app must never *require* the user to know where Tor is: it reports what it
+    found, where, and which version, and the UI can then offer "use it" or "run the
+    built-in lab simulation" as a single click.
+    """
+    configured = ""
+    with contextlib.suppress(Exception):
+        configured = str(cfg.get_str("tor.binary", ""))  # type: ignore[attr-defined]
+    found = find_tor_binary(cfg, extra_dirs=extra_dirs)
+    bundled = ""
+    if getattr(sys, "frozen", False):
+        candidate = Path(sys.executable).parent / "tor" / ("tor.exe" if os.name == "nt" else "tor")
+        if candidate.is_file():
+            bundled = str(candidate)
+    return {
+        "found": bool(found),
+        "path": found or "",
+        "configured": configured,
+        "configured_ok": bool(configured and Path(os.path.expandvars(configured)).is_file()),
+        "version": tor_version(found) if found else "",
+        "bundled": bool(found) and bool(bundled) and found == bundled,
+        "platform": "windows" if os.name == "nt" else "posix",
+        "search_dirs": [str(path) for path in (extra_dirs or [])],
+        "hint": (
+            "Tor found - UQAB can route through it."
+            if found
+            else "No Tor found: UQAB will run its built-in lab simulation until you "
+            "point it at a tor binary in Setup."
+        ),
+    }
 
 
 def write_torrc(

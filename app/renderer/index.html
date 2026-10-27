@@ -109,6 +109,9 @@
         </details>
 
         <div class="divider"></div>
+        <button class="ghost-btn wide" id="open-setup">Setup: connection &amp; Tor</button>
+        <p class="muted small" id="setup-summary">not configured yet</p>
+        <div class="divider"></div>
         <div class="muted small" id="app-meta">UQAB</div>
       </aside>
     </main>
@@ -137,6 +140,136 @@
       <div class="row end">
         <button class="ghost-btn" id="modal-cancel">Not now</button>
         <button class="primary" id="modal-accept">I understand, opt in</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wizard" id="wizard" hidden>
+    <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+      <div class="wizard-head">
+        <div class="brand"><span class="mark">UQAB</span></div>
+        <h2 id="wizard-title">Set up UQAB</h2>
+        <p class="muted" id="wizard-sub">
+          Three short steps. UQAB starts working out of the box - Tor is optional.
+        </p>
+        <div class="dots" id="wizard-dots">
+          <span class="dot active"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+      </div>
+
+      <section class="wizard-body" data-step="1">
+        <h3>How should UQAB reach the network?</h3>
+        <div class="choice">
+          <label class="choice-card">
+            <input type="radio" name="mode" value="auto" checked>
+            <div>
+              <strong>Automatic</strong>
+              <p class="muted small">Use Tor when it is installed. If it is not, UQAB runs its
+                own lab simulation so everything still works.</p>
+            </div>
+          </label>
+          <label class="choice-card">
+            <input type="radio" name="mode" value="external">
+            <div>
+              <strong>Use my Tor</strong>
+              <p class="muted small">Point UQAB at a <code>tor</code> binary you already have.</p>
+            </div>
+          </label>
+          <label class="choice-card">
+            <input type="radio" name="mode" value="simulated">
+            <div>
+              <strong>Lab simulation</strong>
+              <p class="muted small">No Tor at all: a demo stack on this machine. Clearly
+                labelled in the app.</p>
+            </div>
+          </label>
+        </div>
+
+        <div class="detect" id="tor-detect">
+          <div class="row">
+            <span class="pill" id="tor-pill">checking</span>
+            <span class="small" id="tor-text">looking for a Tor binary...</span>
+          </div>
+        </div>
+
+        <div class="field" id="tor-binary-field" hidden>
+          <span>Tor binary</span>
+          <div class="row">
+            <input type="text" id="tor-binary" placeholder="C:\Program Files\Tor\tor.exe">
+            <button class="ghost-btn" id="tor-browse">Browse...</button>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <label class="field">
+            <span>SOCKS port</span>
+            <input type="number" id="socks-port" min="1024" max="65535" value="9150">
+          </label>
+          <label class="field">
+            <span>Default persona</span>
+            <select id="setup-persona"></select>
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced: bridges</summary>
+          <p class="muted small">
+            One bridge per line, exactly as your bridge provider gave it. Leave empty for a
+            normal Tor connection.
+          </p>
+          <textarea id="bridges" rows="3" placeholder="192.0.2.10:9443 AAAA..."></textarea>
+        </details>
+      </section>
+
+      <section class="wizard-body" data-step="2" hidden>
+        <h3>Personas and privacy</h3>
+        <p class="muted">
+          A persona is the cover-traffic schedule UQAB follows. You can pick a different one
+          for every session, and generate your own from a local model later.
+        </p>
+        <div class="card quiet">
+          <div class="row spread">
+            <div>
+              <strong>Clearnet learning</strong>
+              <p class="muted small">Off unless you opt in. Learns a persona from a capture
+                you supply, deletes the capture, stores aggregates only.</p>
+            </div>
+            <span class="pill off" id="wizard-consent-pill">off</span>
+          </div>
+        </div>
+        <label class="checkline">
+          <input type="checkbox" id="start-with-windows">
+          <span>Start UQAB when I sign in to this computer</span>
+        </label>
+        <p class="muted small">
+          UQAB never sends telemetry. The only network traffic it makes on its own is the one
+          you start with the Start button.
+        </p>
+      </section>
+
+      <section class="wizard-body" data-step="3" hidden>
+        <h3>Ready</h3>
+        <div class="card quiet">
+          <dl class="summary">
+            <dt>Connection</dt><dd id="sum-mode">-</dd>
+            <dt>SOCKS port</dt><dd id="sum-port">-</dd>
+            <dt>Persona</dt><dd id="sum-persona">-</dd>
+            <dt>Bridges</dt><dd id="sum-bridges">none</dd>
+          </dl>
+        </div>
+        <p class="muted small">
+          Pressing Finish saves this and restarts the engine. You can reopen Setup from the
+          panel at any time; nothing here is permanent.
+        </p>
+        <p class="small error" id="wizard-error" hidden></p>
+      </section>
+
+      <div class="wizard-foot">
+        <button class="ghost-btn" id="wizard-back" disabled>Back</button>
+        <div class="row end">
+          <button class="ghost-btn" id="wizard-skip">Skip for now</button>
+          <button class="primary" id="wizard-next">Next</button>
+        </div>
       </div>
     </div>
   </div>
