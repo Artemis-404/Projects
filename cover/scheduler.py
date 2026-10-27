@@ -10,7 +10,12 @@ sides derive from the persona and the session seed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import heapq
+import itertools
 import json
+import sys
+import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
@@ -425,17 +430,19 @@ class ShapedChannel:
 
     async def uplink(self) -> None:
         """The slot clock: exactly one record per slot, never more (FR-06)."""
-        loop = asyncio.get_running_loop()
-        t0 = loop.time()
+        # perf_counter, not loop.time(): on Windows before Python 3.13 the loop
+        # clock is GetTickCount64 and moves in ~15.6 ms steps (NFR-03). Logged
+        # times stay on the monotonic epoch the experiment's ground truth uses.
+        clock = time.perf_counter
+        t0 = clock()
+        epoch = time.monotonic() - t0
         last_send = t0
         for slot in self._slots():
             due = t0 + slot.due_s
             # Floor rate (FR-08): even a persona that asks for slower slots can
             # never push the interval past floor_slot_ms.
             due = min(due, last_send + self.floor_s) if slot.due_s > 0 else due
-            delay = due - loop.time()
-            if delay > 0:
-                await asyncio.sleep(delay)
+            await sleep_until(due)
             if self._closing:
                 return
             if self.frames is not None:
@@ -453,12 +460,14 @@ class ShapedChannel:
                 if packed.consumed < len(payload):  # pragma: no cover - defensive
                     self.queue.push_front(payload[packed.consumed :])
             self.writer.write(packed.raw)
+            # Count once the record is handed to the transport, so a cancel
+            # during drain() cannot leave a written record uncounted.
+            self.counters.add_up(real, len(packed.raw) - real)
             await self.writer.drain()
-            now = loop.time()
+            now = clock()
             self.last_record_size = slot.record_size
             last_send = now
-            self.counters.add_up(real, len(packed.raw) - real)
-            self.recorder.record(slot, (now - due) * 1000.0, len(packed.raw), now)
+            self.recorder.record(slot, (now - due) * 1000.0, len(packed.raw), now + epoch)
             if slot.state != self.period:
                 self.period = slot.state
                 if self.on_period is not None:
@@ -542,6 +551,75 @@ class ShapedChannel:
 
 def now() -> float:
     return time.monotonic()
+
+
+class PreciseTimer:
+    """Wakes asyncio waiters at ``time.perf_counter()`` deadlines (NFR-03).
+
+    On Windows asyncio timeouts are quantised to the system timer (~15.6 ms by
+    default), which put the p95 slot error near 19 ms. ``time.sleep`` uses a
+    high-resolution waitable timer there (Python 3.11+), so one daemon thread
+    sleeps in short slices and resolves each waiter's future on its own loop.
+    """
+
+    SLICE_S = 0.002  # a newly added, earlier deadline waits at most this long
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._heap: list[tuple[float, int, asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
+        self._order = itertools.count()
+        self._thread: threading.Thread | None = None
+
+    def wait(self, due: float) -> asyncio.Future[None]:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[None] = loop.create_future()
+        with self._lock:
+            heapq.heappush(self._heap, (due, next(self._order), loop, future))
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="uqab-slot-timer", daemon=True)
+                self._thread.start()
+        self._wake.set()
+        return future
+
+    def _run(self) -> None:
+        while True:
+            ready = []
+            with self._lock:
+                now = time.perf_counter()
+                while self._heap and self._heap[0][0] <= now:
+                    ready.append(heapq.heappop(self._heap))
+                next_due = self._heap[0][0] if self._heap else None
+                if next_due is None:
+                    self._wake.clear()
+            for _, _, loop, future in ready:
+                with contextlib.suppress(RuntimeError):  # that loop is already closed
+                    loop.call_soon_threadsafe(_resolve, future)
+            if next_due is None:
+                self._wake.wait()
+                continue
+            remaining = next_due - time.perf_counter()
+            if remaining > 0:
+                time.sleep(min(remaining, self.SLICE_S))
+
+
+def _resolve(future: asyncio.Future[None]) -> None:
+    if not future.done():
+        future.set_result(None)
+
+
+_PRECISE = PreciseTimer()
+
+
+async def sleep_until(due: float) -> None:
+    """Sleep until ``time.perf_counter() >= due`` with ~1 ms precision."""
+    delay = due - time.perf_counter()
+    if delay <= 0:
+        return
+    if sys.platform != "win32":
+        await asyncio.sleep(delay)
+        return
+    await _PRECISE.wait(due)
 
 
 def ensure_positive(value: float, name: str) -> float:

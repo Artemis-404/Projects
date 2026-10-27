@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
 
 from cover.record import build_record, extract_data, parse_record
-from cover.scheduler import ByteQueue, Counters, ShapedChannel, SlotRecorder
+from cover.scheduler import ByteQueue, Counters, PreciseTimer, ShapedChannel, SlotRecorder
 from cover.timetable import Timetable
 from persona.model import Persona, builtin_balanced
 from protocol.frames import HEADER_SIZE, Frame, FrameType, ping_payload
@@ -321,3 +322,24 @@ def test_persona_period_changes_are_reported() -> None:
 
 async def _noop(_data: bytes) -> None:
     return None
+
+
+def test_precise_timer_wakes_in_deadline_order_and_never_early() -> None:
+    """The Windows slot timer (NFR-03) resolves each waiter at, not before, its deadline."""
+    timer = PreciseTimer()
+
+    async def scenario() -> list[tuple[int, float]]:
+        start = time.perf_counter()
+        woke: list[tuple[int, float]] = []
+
+        async def waiter(index: int, offset_s: float) -> None:
+            await timer.wait(start + offset_s)
+            woke.append((index, (time.perf_counter() - start - offset_s) * 1000.0))
+
+        await asyncio.gather(*(waiter(i, s) for i, s in enumerate((0.06, 0.02, 0.04, 0.0))))
+        return woke
+
+    woke = run(scenario(), timeout=10)
+    assert [index for index, _ in woke] == [3, 1, 2, 0]
+    assert all(late_ms >= 0.0 for _, late_ms in woke)
+    assert max(late_ms for _, late_ms in woke) < 30.0
