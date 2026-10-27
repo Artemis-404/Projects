@@ -169,6 +169,22 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cfg = load_config()
     paths = CertPaths.from_config(cfg)
+    # ``--out DIR`` writes the certificates somewhere else (used by the packager,
+    # which pre-generates them inside the bundle).
+    if "--out" in args:
+        index = args.index("--out")
+        if index + 1 >= len(args):
+            print("--out needs a directory")
+            return 2
+        directory = Path(args[index + 1]).expanduser()
+        directory.mkdir(parents=True, exist_ok=True)
+        paths = CertPaths(
+            ca=directory / "ca.crt",
+            cert=directory / "client.crt",
+            key=directory / "client.key",
+            server_cert=directory / "server.crt",
+            server_key=directory / "server.key",
+        )
     force = "--force" in args
     if "--check" in args:
         problems = check(paths)

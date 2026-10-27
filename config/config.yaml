@@ -51,6 +51,7 @@ llm:
   model: qwen2.5:1.5b
   timeout_s: 180
   variants: 3
+  attempts: 3
   out_dir: persona/profiles/generated
 
 profile:
@@ -68,13 +69,14 @@ lab:
   enabled: true
 
 dashboard:
+  host: 127.0.0.1
   port: 8501
 
 experiments:
   driver: auto             # auto | playwright | http
-  loads_per_site: 30
-  active_s: 20
-  idle_s: 40
+  loads_per_site: 30       # total page loads shared across the site list
+  load_s: 1                # dwell time on an ACTIVE (loading) phase
+  idle_s: 3                # dwell time on a following IDLE phase
   sites:
     - http://demo.uqab/
     - http://demo.uqab/news

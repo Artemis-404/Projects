@@ -497,8 +497,11 @@ class Engine:
                 detail=health.detail,
             )
         elif health.bootstrap >= 100 or (pt_state == "connected" and not stale):
-            # Either Tor finished bootstrapping through the bridge (which means a
-            # PT tunnel worked) or a shaped session is already carrying bytes.
+            # Tor finishing its bootstrap through the bridge *is* proof the PT
+            # tunnel works, and in lab mode the stack reports 100 when the mock
+            # bridge is listening. "Connected" therefore means "you may browse",
+            # not "a page has been loaded": a session only exists after the first
+            # request, which the browser cannot make before Connected.
             self._set_status(state="connected", bootstrap=100, reason="", detail=health.detail)
         else:
             self._set_status(

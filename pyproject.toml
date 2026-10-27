@@ -26,5 +26,18 @@ testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
 
+[tool.setuptools.packages.find]
+include = [
+    "analysis*", "app_api*", "config*", "cover*", "dashboard*", "experiments*",
+    "lab*", "packaging*", "persona*", "profile*", "protocol*", "pt*",
+    "security*", "storage*", "tunnel*",
+]
+
 [tool.coverage.run]
-source = ["pt", "protocol", "cover", "persona", "tunnel", "security", "app_api", "profile", "analysis"]
+source = [
+    "pt", "protocol", "cover", "persona", "tunnel", "security", "app_api",
+    "profile", "analysis", "experiments", "storage", "dashboard",
+]
+
+[tool.coverage.paths]
+source = ["analysis", "app_api", "config", "cover", "dashboard", "experiments", "lab", "persona", "profile", "protocol", "pt", "security", "storage", "tunnel"]

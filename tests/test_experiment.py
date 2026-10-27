@@ -403,3 +403,74 @@ def test_compare_runs_all_configurations(tmp_path: Path, cfg: Config) -> None:
         rows = list(csv.DictReader(handle))
     assert {row["configuration"] for row in rows} == {"A", "C"}
     assert result.results[0].windows >= 1
+
+
+# ---------------------------------------------------------------------- report
+
+
+def test_report_renders_the_comparison(tmp_path: Path, cfg: Config) -> None:
+    from experiments.report import collect, interpretation, render, write_report
+
+    seed = Path(cfg.path("paths.sqlite"))
+    with db_session(seed) as connection:
+        for index, config in enumerate(("A", "B", "C")):
+            record_run(
+                connection,
+                RunRecord(
+                    run_id=f"2026-02-0{index + 1}-{config}",
+                    started_at="2026-02-01T10:00:00",
+                    configuration=config,
+                    persona_id="balanced" if config != "C" else "high",
+                    duration_s=90.0,
+                    real_bytes=120_000,
+                    cover_bytes=300_000,
+                    overhead=1.0 + index * 0.75,
+                    notes="seeded",
+                ),
+                page_loads=[
+                    {"index": n, "site": "demo.uqab", "status": 200, "bytes": 4096, "load_ms": 200.0 + index * 300}
+                    for n in range(1, 4)
+                ],
+                scores={
+                    "folds": 5,
+                    "lr": {"accuracy": 0.9 - index * 0.15, "precision": 0.9, "recall": 0.9,
+                           "f1": 0.9 - index * 0.15, "f1_ci_low": 0.8 - index * 0.15,
+                           "f1_ci_high": 0.98 - index * 0.15},
+                    "rf": {"accuracy": 0.92 - index * 0.15, "precision": 0.92, "recall": 0.92,
+                           "f1": 0.92 - index * 0.15, "f1_ci_low": 0.82 - index * 0.15,
+                           "f1_ci_high": 0.99 - index * 0.15},
+                },
+                slot_timing={"p50_error_ms": 0.8, "p95_error_ms": 1.6, "max_error_ms": 2.2},
+            )
+
+    data = collect(cfg)
+    assert data.statistics["runs"] == 3
+    assert data.statistics["page_loads"] == 9
+    assert [row["configuration"] for row in data.configurations] == ["A", "B", "C"]
+    text = interpretation(data)
+    assert "Plain Tor" in text and "persona cover" in text
+
+    markdown = render(data)
+    assert "| Config | Meaning |" in markdown
+    assert "plain Tor (no cover)" in markdown
+    assert "constant-rate" in markdown
+    assert "2026-02-03-C" in markdown
+    assert "logreg" in markdown
+    assert "Accuracy" in markdown
+    assert "Classifier scores" in markdown
+
+    written = write_report(cfg, tmp_path / "results.md")
+    assert written.is_file()
+    assert "UQAB evaluation results" in written.read_text(encoding="utf-8")
+    assert written.with_suffix(".json").is_file()
+
+
+def test_report_without_data_says_so(tmp_path: Path, cfg: Config) -> None:
+    from experiments.report import collect, render
+
+    empty = cfg.with_overrides(**{"paths.sqlite": str(tmp_path / "none.sqlite")})
+    data = collect(empty)
+    assert data.notes
+    markdown = render(data)
+    assert "no runs recorded" in markdown
+    assert "cannot be" in markdown
