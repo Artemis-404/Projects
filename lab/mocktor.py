@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 from config import Config
 from lab.orport import encode_stream_header
@@ -105,7 +108,7 @@ class MockTor:
         self,
         cfg: Config,
         *,
-        persona: str,
+        persona: str | None,
         socks_host: str = "127.0.0.1",
         socks_port: int = 9150,
         bridge_host: str = "127.0.0.1",
@@ -113,6 +116,8 @@ class MockTor:
         log: logging.Logger | None = None,
         python: str | None = None,
         config_path: Path | None = None,
+        plain_target: tuple[str, int] | None = None,
+        plain_log: Path | None = None,
     ) -> None:
         self.cfg = cfg
         if config_path is None:
@@ -122,7 +127,13 @@ class MockTor:
                 cfg, cfg.path("paths.run") / "effective-config.yaml"
             )
         self.config_path = Path(config_path)
-        self.persona = persona
+        # persona None means configuration A: plain Tor, no pluggable transport.
+        self.plain = persona is None
+        self.persona = persona or "plain"
+        self.plain_target = plain_target
+        self.plain_log = Path(plain_log) if plain_log else None
+        self._plain_handle: TextIO | None = None
+        self._plain_index = 0
         self.socks_host = socks_host
         self.socks_port = socks_port
         self.bridge_host = bridge_host
@@ -217,7 +228,11 @@ class MockTor:
 
     # ------------------------------------------------------------ SOCKS front
     async def start(self) -> int:
-        await self.launch_pt_client()
+        if not self.plain:
+            await self.launch_pt_client()
+        if self.plain_log is not None:
+            self.plain_log.parent.mkdir(parents=True, exist_ok=True)
+            self._plain_handle = self.plain_log.open("a", encoding="utf-8")
         self.server = await asyncio.start_server(
             self._handle_browser, self.socks_host, self.socks_port
         )
@@ -234,6 +249,10 @@ class MockTor:
 
     async def close(self) -> None:
         self._running = False
+        if self._plain_handle is not None:
+            with contextlib.suppress(Exception):
+                self._plain_handle.close()
+            self._plain_handle = None
         if self.server is not None:
             self.server.close()
             with contextlib.suppress(Exception):
@@ -270,6 +289,23 @@ class MockTor:
             if request.command != socks5.CMD_CONNECT:
                 await socks5.send_reply(writer, socks5.REP_CMD_NOT_SUPPORTED)
                 return
+            if self.plain:
+                target = self.plain_target or (request.host, request.port)
+                try:
+                    pt_reader, pt_writer = await asyncio.wait_for(
+                        asyncio.open_connection(target[0], target[1]), 15
+                    )
+                except OSError:
+                    await socks5.send_reply(writer, socks5.REP_HOST_UNREACHABLE)
+                    return
+                await socks5.send_reply(writer, socks5.REP_SUCCESS)
+                assert pt_reader is not None and pt_writer is not None
+                await asyncio.gather(
+                    self._pipe(reader, pt_writer, "up"),
+                    self._pipe(pt_reader, writer, "down"),
+                    return_exceptions=True,
+                )
+                return
             assert self.method is not None
             args_text = f"persona={self.persona}"
             pt_reader, pt_writer = await SOCKSClient.connect(
@@ -293,8 +329,30 @@ class MockTor:
                     with contextlib.suppress(Exception):
                         stream.close()
 
-    @staticmethod
-    async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def _log_plain(self, size: int, direction: str) -> None:
+        handle = self._plain_handle
+        if handle is None:
+            return
+        self._plain_index += 1
+        handle.write(
+            json.dumps(
+                {
+                    "t": round(time.monotonic(), 6),
+                    "index": self._plain_index,
+                    "size": int(size),
+                    "dir": direction,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+
+    async def _pipe(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        direction: str | None = None,
+    ) -> None:
         total = 0
         try:
             while True:
@@ -302,6 +360,8 @@ class MockTor:
                 if not data:
                     break
                 total += len(data)
+                if direction is not None:
+                    self._log_plain(len(data), direction)
                 writer.write(data)
                 await writer.drain()
         except Exception:

@@ -138,7 +138,7 @@ def _parse_ipv4(data: bytes) -> tuple[str, str, int, int, int] | None:
     if len(data) < ihl + 8:
         return None
     total_len = int.from_bytes(data[2:4], "big")
-    protocol = data[9]
+    _protocol = data[9]  # reported by the caller from the packet dict
     src = ".".join(str(b) for b in data[12:16])
     dst = ".".join(str(b) for b in data[16:20])
     transport = data[ihl:]
@@ -153,7 +153,7 @@ def _parse_ipv6(data: bytes) -> tuple[str, str, int, int, int] | None:
     if len(data) < 40 or (data[0] >> 4) != 6:
         return None
     payload_len = int.from_bytes(data[4:6], "big")
-    next_header = data[6]
+    _next_header = data[6]  # extension headers are not walked
     src = ":".join(
         f"{int.from_bytes(data[i:i + 2], 'big'):x}" for i in range(8, 24, 2)
     )

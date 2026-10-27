@@ -12,10 +12,10 @@ import math
 import random
 from collections.abc import Sequence
 from pathlib import Path
+from profile.privacy import check_profile
 from typing import Any
 
 from analysis.features import FeatureWindow
-from profile.privacy import check_profile
 
 PROFILE_VERSION = 1
 SIZE_EDGES = [0, 100, 200, 400, 800, 1200, 1600, 2200, 3000, 5000, 10000, 20000]
@@ -79,8 +79,8 @@ def kmeans(
     return centroids, labels
 
 
-def _histogram(values: Sequence[float], edges: Sequence[float]) -> dict[str, list[float]]:
-    counts = [0] * (len(edges) - 1)
+def _histogram(values: Sequence[float], edges: Sequence[float]) -> dict[str, Any]:
+    counts: list[int] = [0] * (len(edges) - 1)
     for value in values:
         for index in range(len(edges) - 1):
             if edges[index] <= value < edges[index + 1]:

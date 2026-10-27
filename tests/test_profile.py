@@ -5,26 +5,25 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
+from profile.capture_features import OptInRequired, extract_features, read_capture
+from profile.learner import ProfileError, learn, load_profile, write_profile
+from profile.privacy import check_profile, check_profile_file
+from profile.sampler import sample_persona, sample_variants, write_personas
 
 import pytest
 
 from analysis.features import (
-    FeatureWindow,
+    GroundTruthWindow,
     extract_windows,
+    read_features,
     read_ground_truth,
     write_features,
-    read_features,
     write_ground_truth,
-    GroundTruthWindow,
 )
 from analysis.pcap import build_packet, read_pcap, write_pcap
 from app_api.consent import CONSENT_TEXT_VERSION, ConsentStore
 from config import load_config
 from persona.validator import Limits, validate_dict
-from profile.capture_features import OptInRequired, extract_features, read_capture
-from profile.learner import ProfileError, learn, load_profile, write_profile
-from profile.privacy import check_profile, check_profile_file
-from profile.sampler import sample_persona, sample_variants, write_personas
 
 BRIDGE_PORT = 9443
 

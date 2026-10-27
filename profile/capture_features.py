@@ -7,6 +7,7 @@ Refuses to run unless the consent screen has set the opt-in flag.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import os
 from collections.abc import Iterable
@@ -81,10 +82,8 @@ def secure_delete(path: Path | str) -> None:
             os.fsync(handle.fileno())
     except OSError:
         pass
-    try:
+    with contextlib.suppress(FileNotFoundError):
         target.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def extract_features(

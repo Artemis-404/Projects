@@ -57,7 +57,7 @@ class LabStack:
         self,
         cfg: Config,
         *,
-        persona: str = "balanced",
+        persona: str | None = "balanced",
         socks_port: int = 9150,
         bridge_pt_port: int | None = None,
         origin_port: int | None = None,
@@ -111,6 +111,7 @@ class LabStack:
         assert self.server.server is not None and self.server.server.sockets
         self.bridge_pt_port = int(self.server.server.sockets[0].getsockname()[1])
 
+        plain = self.persona is None
         self.tor = MockTor(
             self.cfg,
             persona=self.persona,
@@ -118,15 +119,22 @@ class LabStack:
             bridge_pt_port=self.bridge_pt_port,
             log=self.log,
             config_path=self.config_path,
+            # Configuration A: no pluggable transport at all, straight to the origin.
+            plain_target=("127.0.0.1", actual_origin) if plain else None,
+            plain_log=(
+                self.cfg.path("paths.run") / "logs" / "plain-client.jsonl" if plain else None
+            ),
         )
         self.socks_port = await self.tor.start()
 
         payload = {
             "ready": True,
             "mode": "simulated",
-            "persona": self.persona,
+            "persona": self.persona or "plain",
+            "plain": plain,
             "socks_port": self.socks_port,
             "socks_host": "127.0.0.1",
+            "log_dir": str(self.cfg.path("paths.run") / "logs"),
             "bridge_pt_port": self.bridge_pt_port,
             "orport_port": orport_port,
             "origin_port": actual_origin,
