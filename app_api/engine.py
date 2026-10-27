@@ -60,6 +60,7 @@ class EngineStatus:
     mode: str = ""
     reason: str = ""
     detail: str = ""
+    socks_port: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,6 +69,7 @@ class EngineStatus:
             "persona": self.persona,
             "since": self.since,
             "mode": self.mode,
+            "socks_port": int(self.socks_port),
             "reason": self.reason,
             "detail": self.detail,
             "engine_version": ENGINE_VERSION,
@@ -379,12 +381,14 @@ class Engine:
         persona = self._persona(persona_id)
         ensure(CertPaths.from_config(self.cfg))
         mode = self._resolve_mode()
+        socks_port = int(self.cfg.get_int("tor.socks_port", 9150))
         self._set_status(
             state="connecting",
             bootstrap=5,
             persona=persona.id,
             since=time.time(),
             mode=mode,
+            socks_port=socks_port,
             reason="",
             detail="starting " + ("Tor" if mode == "tor" else "lab simulation"),
         )
@@ -412,11 +416,16 @@ class Engine:
             self._set_status(state="blocked", bootstrap=0, reason=str(exc), detail="start failed")
             self._write_engine_file()
             raise
+        actual_port = getattr(backend, "socks_port", None)
+        if isinstance(actual_port, int) and actual_port > 0:
+            self._set_status(socks_port=actual_port)
         self._start_monitor()
         self._write_engine_file()
         return self.status_dict()
 
     async def stop(self, reason: str = "stopped by user") -> dict[str, Any]:
+        # The port stays in the status so the UI can explain what was stopped;
+        # the app simply stops routing once the state leaves {connecting, connected}.
         if self.monitor_task is not None:
             self.monitor_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>UQAB</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand" title="UQAB - persona-driven cover traffic">
+        <span class="mark">UQAB</span>
+      </div>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <button class="icon-btn" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab">+</button>
+      <div class="window-tools">
+        <button class="icon-btn" id="open-dashboard" title="Open the evaluation dashboard" aria-label="Dashboard">&#9636;</button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <button class="icon-btn" id="back" title="Back (Alt+Left)" aria-label="Back">&#8592;</button>
+      <button class="icon-btn" id="forward" title="Forward (Alt+Right)" aria-label="Forward">&#8594;</button>
+      <button class="icon-btn" id="reload" title="Reload (Ctrl+R)" aria-label="Reload">&#8635;</button>
+      <form class="address" id="address-form" autocomplete="off">
+        <span class="lock" id="lock" title="Requests only leave through the tunnel">&#9679;</span>
+        <input id="address" type="text" spellcheck="false" placeholder="Search or enter an address" aria-label="Address bar">
+        <button type="button" class="icon-btn ghost" id="bookmark" title="Bookmark (Ctrl+D)" aria-label="Bookmark">&#9734;</button>
+      </form>
+      <button class="ghost-btn" id="history-toggle" title="History (Ctrl+H)">History</button>
+    </div>
+
+    <main class="content">
+      <section class="viewport" id="viewport" aria-live="polite">
+        <div class="blocked" id="blocked">
+          <div class="blocked-inner">
+            <h2>Nothing can leave this machine yet</h2>
+            <p>
+              UQAB routes every page through its own SOCKS5 tunnel. Start a session from the
+              panel on the right: the address bar unlocks only when the tunnel reports
+              <strong>Protected</strong>.
+            </p>
+            <button class="primary" id="blocked-start">Start session</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel" id="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Session</div>
+            <div class="state" id="state-pill" data-tone="idle">Disconnected</div>
+          </div>
+          <span class="badge" id="mode-badge" hidden></span>
+        </div>
+
+        <div class="progress" id="bootstrap-wrap" hidden>
+          <div class="progress-bar"><span id="bootstrap-bar" style="width:0%"></span></div>
+          <div class="muted small"><span id="bootstrap-text">starting</span></div>
+        </div>
+
+        <label class="field">
+          <span>Persona</span>
+          <select id="persona" aria-label="Persona"></select>
+        </label>
+        <div class="muted small" id="persona-hint">Chosen when the session starts.</div>
+
+        <button class="primary wide" id="toggle">Start</button>
+        <div class="muted small" id="session-detail"></div>
+
+        <div class="counters">
+          <div class="counter">
+            <div class="label">Real traffic</div>
+            <div class="value"><span id="real-down">0 B</span><span class="unit">down</span></div>
+            <div class="muted small"><span id="real-up">0 B</span> up</div>
+          </div>
+          <div class="counter">
+            <div class="label">Cover traffic</div>
+            <div class="value"><span id="cover-down">0 B</span><span class="unit">down</span></div>
+            <div class="muted small"><span id="cover-up">0 B</span> up</div>
+          </div>
+          <div class="counter">
+            <div class="label">Overhead</div>
+            <div class="value" id="overhead">-</div>
+            <div class="muted small">period <span id="period">-</span></div>
+          </div>
+          <div class="counter">
+            <div class="label">Uptime</div>
+            <div class="value" id="uptime">0:00</div>
+            <div class="muted small">1 Hz live panel</div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <details class="consent" id="consent-box">
+          <summary>Clearnet learning <span class="pill off" id="consent-pill">off</span></summary>
+          <p class="muted small" id="consent-text">
+            Off by default. UQAB learns a persona from a capture you provide only if you
+            opt in here; the raw capture is deleted after the aggregates are extracted.
+          </p>
+          <div class="row">
+            <button class="ghost-btn" id="consent-accept">Opt in</button>
+            <button class="ghost-btn danger" id="consent-withdraw">Withdraw &amp; delete</button>
+          </div>
+          <p class="muted small" id="consent-meta"></p>
+        </details>
+
+        <div class="divider"></div>
+        <div class="muted small" id="app-meta">UQAB</div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="drawer" id="history" hidden>
+    <div class="drawer-head">
+      <h3>History</h3>
+      <div class="row">
+        <input id="history-search" type="search" placeholder="Search history" aria-label="Search history">
+        <button class="ghost-btn danger" id="history-clear">Clear</button>
+        <button class="icon-btn" id="history-close" aria-label="Close history">&#10005;</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="history-list"></div>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">Clearnet learning</h2>
+      <pre class="consent-text" id="modal-text"></pre>
+      <p class="muted small">
+        Nothing is uploaded. If you accept, you may later withdraw, which deletes the
+        learned profile from this machine.
+      </p>
+      <div class="row end">
+        <button class="ghost-btn" id="modal-cancel">Not now</button>
+        <button class="primary" id="modal-accept">I understand, opt in</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
