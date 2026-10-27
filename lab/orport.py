@@ -21,6 +21,8 @@ import asyncio
 import contextlib
 import logging
 
+from security.guard import close_server
+
 MAGIC = b"UQABLAB1"
 ATYP_HOSTNAME = 1
 MAX_HOST = 255
@@ -90,9 +92,7 @@ class MockORPort:
 
     async def close(self) -> None:
         if self.server is not None:
-            self.server.close()
-            with contextlib.suppress(Exception):
-                await self.server.wait_closed()
+            await close_server(self.server)
             self.server = None
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

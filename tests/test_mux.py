@@ -32,6 +32,7 @@ from protocol.frames import (
 from pt.client import ClientPT
 from pt.server import ServerPT
 from pt.stats import read_stats
+from security.guard import close_server
 from tests.conftest import run
 from tests.support import SocksCaller, open_echo_server
 from tunnel.tls import TLSSettings
@@ -193,9 +194,7 @@ class Tunnel:
             with contextlib.suppress(Exception):
                 await self.server.shutdown()
         if self.echo is not None:
-            self.echo.close()
-            with contextlib.suppress(Exception):
-                await self.echo.wait_closed()
+            await close_server(self.echo)
 
 
 def test_parallel_streams_share_one_tunnel(cfg: Config, tls_settings: TLSSettings) -> None:

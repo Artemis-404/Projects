@@ -19,6 +19,7 @@ from pt.client import ClientPT
 from pt.server import ServerPT
 from pt.session import SessionParams, SessionRejected, client_handshake
 from pt.stats import read_stats
+from security.guard import close_server
 from tests.conftest import run
 from tests.support import SocksCaller, free_port, open_echo_server
 from tunnel.tls import TLSSettings, open_tunnel
@@ -98,9 +99,7 @@ class Stack:
                 with contextlib.suppress(Exception):
                     await server.shutdown()
         if self.echo is not None:
-            self.echo.close()
-            with contextlib.suppress(Exception):
-                await self.echo.wait_closed()
+            await close_server(self.echo)
 
 
 def test_socks_to_orport_roundtrip_is_shaped(
@@ -223,9 +222,7 @@ def test_bridge_rejects_unknown_persona(
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
             await server.shutdown()
-            echo.close()
-            with contextlib.suppress(Exception):
-                await echo.wait_closed()
+            await close_server(echo)
 
     run(scenario(), timeout=60)
 
@@ -252,9 +249,7 @@ def test_bridge_rejects_persona_hash_mismatch(
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
             await server.shutdown()
-            echo.close()
-            with contextlib.suppress(Exception):
-                await echo.wait_closed()
+            await close_server(echo)
 
     run(scenario(), timeout=60)
 
@@ -282,9 +277,7 @@ def test_server_handshake_accepts_matching_hash(
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
             await server.shutdown()
-            echo.close()
-            with contextlib.suppress(Exception):
-                await echo.wait_closed()
+            await close_server(echo)
         assert personas[persona.id].content_hash() == persona.content_hash()
 
     run(scenario(), timeout=60)
@@ -395,9 +388,7 @@ def test_client_retries_and_recovers_within_retry_window(
                 await client_task
             with contextlib.suppress(Exception):
                 await client.shutdown()
-            echo.close()
-            with contextlib.suppress(Exception):
-                await echo.wait_closed()
+            await close_server(echo)
 
     run(scenario(), timeout=120)
 

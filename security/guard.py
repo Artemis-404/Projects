@@ -104,6 +104,27 @@ async def close_stream(writer: Any) -> None:
                 transport.abort()
 
 
+async def close_server(server: Any, writers: Any = (), *, wait_s: float = 2.0) -> None:
+    """Stop listening and drop live connections without hanging.
+
+    Since Python 3.12.1 ``Server.wait_closed()`` also waits for every accepted
+    connection, so a listener with a live tunnel never finished closing. Live
+    connections are aborted first and the wait is bounded.
+    """
+    if server is None:
+        return
+    server.close()
+    for writer in list(writers):
+        transport = getattr(writer, "transport", None)
+        with contextlib.suppress(Exception):
+            if transport is not None:
+                transport.abort()
+            else:
+                writer.close()
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(server.wait_closed(), timeout=wait_s)
+
+
 async def fail_closed(
     guard: FailClosedGuard,
     reason: Exception | str,

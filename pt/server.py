@@ -29,7 +29,7 @@ from persona.model import Persona
 from persona.validator import Limits, discover_personas, fallback_persona, load_by_id
 from pt.mux import MuxSession
 from pt.session import server_handshake
-from security.guard import TunnelError, close_stream
+from security.guard import TunnelError, close_server, close_stream
 from tunnel.certs import CertPaths, ensure
 from tunnel.tls import TLSSettings, assert_tls13, peer_subject, server_context
 
@@ -241,22 +241,17 @@ class ServerPT:
             "PT server listening on %s:%s (ORPort %s:%s)",
             host, port, self.orport[0], self.orport[1],
         )
-        async with self.server:
-            await self.server.serve_forever()
+        # start_server is already accepting. serve_forever() and `async with`
+        # are avoided: on Python 3.12+ both wait for every live tunnel to end
+        # before a cancelled serve() returns; shutdown() aborts them instead.
+        try:
+            await asyncio.get_running_loop().create_future()
+        finally:
+            self.server.close()
 
     async def shutdown(self) -> None:
         """Stop listening and abort every live tunnel (fail closed on the client)."""
-        if self.server is not None:
-            self.server.close()
-            with contextlib.suppress(Exception):
-                await self.server.wait_closed()
-        for writer in list(self._active):
-            transport = getattr(writer, "transport", None)
-            with contextlib.suppress(Exception):
-                if transport is not None:
-                    transport.abort()
-                else:
-                    writer.close()
+        await close_server(self.server, self._active)
         self._active.clear()
 
 

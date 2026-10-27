@@ -28,6 +28,7 @@ from typing import TextIO
 from config import Config
 from lab.orport import encode_stream_header
 from pt import socks5
+from security.guard import close_server
 
 PT_CLIENT_MODULE = "pt.client"
 
@@ -254,9 +255,7 @@ class MockTor:
                 self._plain_handle.close()
             self._plain_handle = None
         if self.server is not None:
-            self.server.close()
-            with contextlib.suppress(Exception):
-                await self.server.wait_closed()
+            await close_server(self.server)
             self.server = None
         if self.process is not None and self.process.returncode is None:
             self.log.info("stopping PT client")

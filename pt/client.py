@@ -42,6 +42,7 @@ from pt.stats import StatsWriter
 from security.guard import (
     FailClosedGuard,
     TunnelError,
+    close_server,
     close_stream,
     fail_closed,
 )
@@ -370,11 +371,12 @@ class ClientPT:
             self.announce(port)
         self.log.info("PT client listening on %s:%d", self.bind_host, port)
         try:
-            async with self.server:
-                await self.server.serve_forever()
+            # Already accepting; see ServerPT.serve for why not serve_forever().
+            await asyncio.get_running_loop().create_future()
         except asyncio.CancelledError:  # pragma: no cover - shutdown path
             pass
         finally:
+            self.server.close()
             await self.stats.stop()
 
     async def _maintain_carrier(self) -> None:
@@ -418,12 +420,9 @@ class ClientPT:
         self.guard.on_stopped()
         self.stats.write_once()
         await self.stats.stop()
-        if self.server is not None:
-            self.server.close()
-            with contextlib.suppress(Exception):
-                await self.server.wait_closed()
         for stream_writer in list(self._active):
             await close_stream(stream_writer)
+        await close_server(self.server, self._active)
         self._active.clear()
 
 
