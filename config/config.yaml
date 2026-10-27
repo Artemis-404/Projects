@@ -5,6 +5,8 @@ bridge:
   host: 127.0.0.1          # bridge IP (change to the lab bridge address)
   pt_port: 9443            # UQAB PT server port, the only port the client reaches
   fingerprint: ""          # optional bridge identity fingerprint
+  orport_host: 127.0.0.1   # bridge Tor ORPort, where the PT server forwards bytes
+  orport_port: 9001
 
 tor:
   mode: auto               # auto | external | simulated (lab fallback, clearly labelled)
@@ -36,6 +38,13 @@ cover:
 persona:
   profiles_dir: persona/profiles
   default: balanced
+
+pt:
+  bind_host: 127.0.0.1
+  server_bind_host: 0.0.0.0
+  port: 0                 # 0 = ephemeral; the real port is printed in CMETHOD
+  connect_timeout_s: 60   # how long a SOCKS request waits while retrying (FR-09)
+  log_slots: true
 
 llm:
   url: http://127.0.0.1:11434
