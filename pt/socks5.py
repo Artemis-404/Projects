@@ -121,7 +121,7 @@ async def read_request(reader: asyncio.StreamReader) -> SocksRequest:
         host = ":".join(f"{raw[i]:02x}{raw[i + 1]:02x}" for i in range(0, 16, 2))
     elif kind == ATYP_DOMAIN:
         length = (await _read_exact(reader, 1))[0]
-        host = (await _read_exact(reader, length)).decode("idna", "replace")
+        host = (await _read_exact(reader, length)).decode("ascii", "replace")
     else:
         raise SocksError(f"unsupported address type {kind}")
     port = int.from_bytes(await _read_exact(reader, 2), "big")

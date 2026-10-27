@@ -33,7 +33,13 @@ from persona.validator import Limits, discover_personas, fallback_persona, load_
 from pt import socks5
 from pt.session import PTStream, SessionParams, client_handshake
 from pt.stats import StatsWriter
-from security.guard import FailClosedGuard, TunnelError, close_stream, fail_closed
+from security.guard import (
+    FailClosedGuard,
+    SessionClosed,
+    TunnelError,
+    close_stream,
+    fail_closed,
+)
 from tunnel.certs import CertPaths, ensure
 from tunnel.tls import TLSSettings, open_tunnel
 
@@ -270,6 +276,10 @@ class ClientPT:
         try:
             await stream.run()
             self.log.info("session ended cleanly")
+            self.guard.on_stopped()
+            self.publish()
+        except SessionClosed:
+            self.log.info("bridge ended the session cleanly")
             self.guard.on_stopped()
             self.publish()
         except TunnelError as exc:

@@ -16,6 +16,7 @@ persona.  This is recorded as design clarification D5a in
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -239,8 +240,15 @@ class PTStream:
                 exc = task.exception()
                 if exc is not None:
                     raise exc
-            # The upper stream closed first: a clean end of session.
-            self.log.debug("upper stream closed; ending session")
+            # The upper stream closed first: flush whatever is still queued so a
+            # response is never truncated, then end the session with CLOSE.
+            if pump.done() and not shaped.done():
+                drained = await self.queue.wait_empty(5.0)
+                if not drained:
+                    self.log.warning("queue not fully drained at session end")
+                with contextlib.suppress(Exception):
+                    await channel.send_close()
+                self.log.debug("upper stream closed; session ended cleanly")
         finally:
             for task in (pump, shaped):
                 if not task.done():

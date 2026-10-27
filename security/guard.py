@@ -30,7 +30,11 @@ class TunnelError(RuntimeError):
 
 
 class TunnelClosed(TunnelError):
-    """The peer sent CLOSE or the stream ended."""
+    """The peer sent CLOSE or the stream ended mid-record."""
+
+
+class SessionClosed(TunnelClosed):
+    """The peer ended the session cleanly with a CLOSE frame (not a failure)."""
 
 
 @dataclass(slots=True)

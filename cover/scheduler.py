@@ -20,7 +20,7 @@ from typing import Any
 from cover.record import PackedRecord, build_record, extract_data, parse_record
 from cover.timetable import Slot, Timetable
 from protocol.frames import HEADER_SIZE, Frame, FrameType
-from security.guard import TunnelClosed, TunnelError
+from security.guard import SessionClosed, TunnelClosed, TunnelError
 
 MAX_CHUNK = 65_536
 
@@ -125,6 +125,15 @@ class ByteQueue:
 
     def peek_pending(self) -> int:
         return len(self._buffer)
+
+    async def wait_empty(self, limit_s: float = 5.0) -> bool:
+        """Wait until every queued byte has been sent (graceful session end)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, limit_s)
+        while self._buffer and loop.time() < deadline:
+            self._not_full.set()
+            await asyncio.sleep(0.01)
+        return not self._buffer
 
     def clear(self) -> None:
         """Drop queued real bytes; used when the tunnel fails (FR-09)."""
@@ -234,6 +243,9 @@ class ShapedChannel:
         self.floor_s = max(0.001, floor_slot_ms / 1000.0)
         self.skip_first = skip_first
         self.period = timetable.persona.start_state
+        self.last_record_size = timetable.persona.state(
+            timetable.persona.start_state
+        ).record_size
         self._closing = False
 
     # ------------------------------------------------------------- uplink
@@ -270,6 +282,7 @@ class ShapedChannel:
             self.writer.write(packed.raw)
             await self.writer.drain()
             now = loop.time()
+            self.last_record_size = slot.record_size
             last_send = now
             self.counters.add_up(packed.real_bytes, packed.cover_bytes)
             self.recorder.record(slot, (now - due) * 1000.0, len(packed.raw), now)
@@ -292,7 +305,7 @@ class ShapedChannel:
             data = extract_data(frames)
             for frame in frames:
                 if frame.type is FrameType.CLOSE:
-                    raise TunnelClosed("peer sent CLOSE")
+                    raise SessionClosed("peer ended the session")
                 if frame.type is FrameType.PING and self.on_ping is not None:
                     from protocol.frames import parse_ping
 
@@ -322,6 +335,10 @@ class ShapedChannel:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(uplink, downlink, return_exceptions=True)
+
+    async def send_close(self) -> None:
+        """End the session with a CLOSE frame inside a normal-sized record."""
+        await self.send_control(Frame(FrameType.CLOSE, b""), self.last_record_size)
 
     async def send_control(self, frame: Frame, record_size: int) -> None:
         """Send a control frame in a normal-sized record (CLOSE at teardown)."""

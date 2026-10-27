@@ -137,6 +137,44 @@ def _parse_block(lines: list[tuple[int, str]], pos: int, indent: int) -> tuple[A
     return mapping, pos
 
 
+def dump_yaml(data: dict[str, Any], indent: int = 0) -> str:
+    """Emit the same YAML subset this module reads (for effective config files)."""
+    pad = " " * indent
+    lines: list[str] = []
+    for key, value in data.items():
+        if isinstance(value, dict):
+            if not value:
+                lines.append(f"{pad}{key}: {{}}")
+                continue
+            lines.append(f"{pad}{key}:")
+            lines.append(dump_yaml(value, indent + 2).rstrip("\n"))
+            continue
+        if isinstance(value, list):
+            if not value:
+                lines.append(f"{pad}{key}: []")
+                continue
+            lines.append(f"{pad}{key}:")
+            for item in value:
+                lines.append(f"{pad}  - {_render_scalar(item)}")
+            continue
+        lines.append(f"{pad}{key}: {_render_scalar(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def _render_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, (int, float)):
+        return repr(value) if isinstance(value, float) else str(value)
+    text = str(value)
+    if text == "" or text.strip() != text or any(ch in text for ch in ":#\n\"{}\"'"):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return text
+
+
 def parse_yaml(text: str) -> dict[str, Any]:
     """Parse the UQAB YAML subset into plain Python objects."""
     lines: list[tuple[int, str]] = []
@@ -252,12 +290,63 @@ class Config:
         self.path("profile.path").parent.mkdir(parents=True, exist_ok=True)
 
 
+PATH_KEYS = (
+    "tls.ca",
+    "tls.cert",
+    "tls.key",
+    "tls.server_cert",
+    "tls.server_key",
+    "persona.profiles_dir",
+    "profile.path",
+    "profile.opt_in_flag",
+    "llm.out_dir",
+    "paths.run",
+    "paths.data",
+    "paths.sqlite",
+)
+
+
+def effective_config(cfg: Config) -> dict[str, Any]:
+    """Absolute-path copy of the configuration, safe to hand to child processes."""
+    import copy
+
+    data = copy.deepcopy(cfg.as_dict())
+    for dotted in PATH_KEYS:
+        node: Any = data
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            if not isinstance(node, dict):
+                break
+            node = node.setdefault(part, {})
+        if isinstance(node, dict):
+            node[parts[-1]] = str(cfg.path(dotted))
+    return data
+
+
+def write_effective_config(cfg: Config, path: str | Path) -> Path:
+    """Write the effective configuration for child processes (lab, Tor's PT)."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(dump_yaml(effective_config(cfg)), encoding="utf-8")
+    return target
+
+
 def load_config(path: str | Path | None = None) -> Config:
     """Load the UQAB configuration from ``path`` or the repository default."""
     return Config.load(path)
 
 
-__all__ = ["Config", "ConfigError", "DEFAULT_CONFIG", "REPO_ROOT", "load_config", "parse_yaml"]
+__all__ = [
+    "Config",
+    "ConfigError",
+    "DEFAULT_CONFIG",
+    "REPO_ROOT",
+    "dump_yaml",
+    "effective_config",
+    "load_config",
+    "parse_yaml",
+    "write_effective_config",
+]
 
 if __name__ == "__main__":  # pragma: no cover - manual inspection helper
     import json
