@@ -1,5 +1,8 @@
 /* UQAB browser shell - dark, quiet, branded. No external fonts or images. */
 
+/* `hidden` must win over every display rule below (e.g. `.field`). */
+[hidden] { display: none !important; }
+
 :root {
   color-scheme: dark;
   --bg: #0e1117;
@@ -236,7 +239,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .progress { margin-top: 12px; }
 .progress-bar { height: 6px; background: #202732; border-radius: 3px; overflow: hidden; }
-.progress-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.25s; }
+.progress-bar span { display: block; width: 0; height: 100%; background: var(--accent); transition: width 0.25s; }
 
 .field { display: block; margin-top: 16px; }
 .field span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }

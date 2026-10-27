@@ -156,13 +156,41 @@ function setText(node, text) {
 
 // ---------------------------------------------------------------------- tabs
 
+/**
+ * The URL a <webview> shows. Its methods only exist once it is attached and
+ * dom-ready, so fall back to the src attribute before that.
+ */
+function urlOf(view) {
+  if (!view) return '';
+  try {
+    return view.getURL() || '';
+  } catch {
+    return view.getAttribute('src') || '';
+  }
+}
+
+/** Call a <webview> navigation predicate that may not be ready yet. */
+function viewCan(view, method) {
+  try {
+    return Boolean(view && view[method] && view[method]());
+  } catch {
+    return false;
+  }
+}
+
+function tabIndex(id) {
+  return state.tabs.findIndex((tab) => tab.id === id);
+}
+
+let nextTabId = 0;
+
 function activeContents() {
   const tab = state.tabs[state.activeTab];
   return tab ? tab.view : null;
 }
 
 function createTab(url = 'about:blank', { activate = true } = {}) {
-  const id = state.tabs.length;
+  const id = nextTabId++;
   const view = document.createElement('webview');
   view.setAttribute('partition', 'persist:uqab-tabs');
   view.setAttribute('allowpopups', 'false');
@@ -197,7 +225,7 @@ function wireView(tab) {
   const title = tab.element.querySelector('.title');
 
   view.addEventListener('dom-ready', () => {
-    const current = view.getURL() || '';
+    const current = urlOf(view);
     if (state.tabs[state.activeTab] !== tab) return;
     ui.address.value = current === 'about:blank' ? '' : current;
     updateNavButtons();
@@ -205,13 +233,13 @@ function wireView(tab) {
 
   view.addEventListener('did-navigate', () => {
     if (state.tabs[state.activeTab] !== tab) return;
-    ui.address.value = view.getURL();
+    ui.address.value = urlOf(view);
     updateNavButtons();
   });
 
   view.addEventListener('did-navigate-in-page', () => {
     if (state.tabs[state.activeTab] !== tab) return;
-    ui.address.value = view.getURL();
+    ui.address.value = urlOf(view);
     updateNavButtons();
   });
 
@@ -253,22 +281,22 @@ function wireView(tab) {
 }
 
 function activateTab(id) {
-  if (!state.tabs[id]) return;
-  state.activeTab = id;
+  const index = tabIndex(id);
+  if (index < 0) return;
+  state.activeTab = index;
   for (const tab of state.tabs) {
     const active = tab.id === id;
     tab.element.dataset.active = active ? 'true' : 'false';
     tab.view.dataset.active = active ? 'true' : 'false';
   }
-  const view = state.tabs[id].view;
-  const current = view.getURL() || '';
+  const current = urlOf(state.tabs[index].view);
   ui.address.value = current === 'about:blank' ? '' : current;
   updateLock();
   updateNavButtons();
 }
 
 function closeTab(id) {
-  const index = state.tabs.findIndex((tab) => tab.id === id);
+  const index = tabIndex(id);
   if (index < 0) return;
   const [tab] = state.tabs.splice(index, 1);
   tab.view.remove();
@@ -277,9 +305,9 @@ function closeTab(id) {
     createTab('about:blank');
     return;
   }
-  if (state.activeTab === id) {
+  if (state.activeTab === index) {
     activateTab(state.tabs[Math.max(0, index - 1)].id);
-  } else if (state.activeTab > id) {
+  } else if (state.activeTab > index) {
     state.activeTab -= 1;
   }
 }
@@ -290,7 +318,7 @@ function updateNavButtons() {
   const canGoForward = Boolean(view && view.canGoForward && view.canGoForward());
   ui.back.disabled = !canGoBack;
   ui.forward.disabled = !canGoForward;
-  const current = view ? view.getURL() || '' : '';
+  const current = urlOf(view);
   ui.bookmark.textContent = current && window.__bookmarks && window.__bookmarks.has(current) ? '\u2605' : '\u2606';
 }
 
@@ -310,7 +338,7 @@ function navigate(url) {
     createTab(target);
     return;
   }
-  if (view.getURL() === 'about:blank') {
+  if (urlOf(view) === 'about:blank') {
     view.src = target;
   } else {
     view.loadURL(target);
@@ -319,7 +347,7 @@ function navigate(url) {
 }
 
 function openUrl(url, { newTab = false } = {}) {
-  if (newTab || !activeContents() || activeContents().getURL() === 'about:blank') {
+  if (newTab || !activeContents() || urlOf(activeContents()) === 'about:blank') {
     createTab(url);
     if (state.session === 'connected') {
       ui.address.value = url;
@@ -354,13 +382,13 @@ ui.address.addEventListener('focus', () => ui.address.select());
 
 ui.back.addEventListener('click', () => {
   const view = activeContents();
-  if (view && view.canGoBack && view.canGoBack()) view.goBack();
+  if (viewCan(view, 'canGoBack')) view.goBack();
   updateNavButtons();
 });
 
 ui.forward.addEventListener('click', () => {
   const view = activeContents();
-  if (view && view.canGoForward && view.canGoForward()) view.goForward();
+  if (viewCan(view, 'canGoForward')) view.goForward();
   updateNavButtons();
 });
 
@@ -373,7 +401,7 @@ ui.newTab.addEventListener('click', () => createTab('about:blank'));
 
 ui.bookmark.addEventListener('click', async () => {
   const view = activeContents();
-  const url = view ? view.getURL() : '';
+  const url = urlOf(view);
   if (!url || !/^https?:/i.test(url)) return;
   try {
     const marked = unwrap(
@@ -460,7 +488,7 @@ function updateLock() {
   ui.lock.title = open
     ? `All traffic leaves through SOCKS5 127.0.0.1:${state.socksPort || 9150} (remote DNS)`
     : 'Blocked until a session is protected';
-  ui.blocked.hidden = open || state.tabs.some((tab) => tab.view.getURL() !== 'about:blank');
+  ui.blocked.hidden = open || state.tabs.some((tab) => urlOf(tab.view) !== 'about:blank');
 }
 
 function renderConsent(consent) {
@@ -488,7 +516,10 @@ async function loadPersonas() {
   try {
     const result = await bridge.api.personas();
     const body = unwrap(result, 'personas are unavailable') || {};
-    const ids = Array.isArray(body.personas) ? body.personas : [];
+    // /personas returns {id, source, description} objects; the selects want ids.
+    const ids = (Array.isArray(body.personas) ? body.personas : [])
+      .map((entry) => (typeof entry === 'string' ? entry : entry && entry.id))
+      .filter(Boolean);
     state.personaIds = ids;
     fillPersonaSelect(ui.persona, ids);
     if (ui.setupPersona) fillPersonaSelect(ui.setupPersona, ids);
@@ -918,7 +949,7 @@ document.addEventListener('keydown', (event) => {
     createTab('about:blank');
   } else if (mod && event.key === 'w') {
     event.preventDefault();
-    closeTab(state.activeTab);
+    if (state.tabs[state.activeTab]) closeTab(state.tabs[state.activeTab].id);
   } else if (mod && event.key === 'r') {
     event.preventDefault();
     const view = activeContents();
@@ -943,7 +974,31 @@ async function boot() {
     toast('This page must run inside the UQAB desktop app.');
     return;
   }
+  // Push events first: the main process may announce settings before the
+  // awaits below finish.
+  bridge.on('tunnel:state', (payload) => {
+    if (!payload) return;
+    state.socksPort = payload.socksPort || state.socksPort;
+  });
+  bridge.on('tab:open', ({ url }) => {
+    if (url) openUrl(url, { newTab: true });
+  });
+  bridge.on('settings:loaded', ({ settings }) => {
+    state.settings = settings;
+    renderSetupSummary();
+    if (!settings.completed && ui.wizard.hidden) openWizard();
+  });
+  bridge.on('engine:failure', ({ message }) => {
+    toast(`The engine failed to start: ${message}`);
+  });
+
   createTab('about:blank');
+  try {
+    // Wait for the control API (shared with the main process's own start-up).
+    unwrap(await bridge.engine.ensure(), 'the engine did not start');
+  } catch (error) {
+    toast(`The engine failed to start: ${error.message}`);
+  }
   await loadPersonas();
   await refreshStatus();
   await loadSettings(true);
@@ -962,22 +1017,6 @@ async function boot() {
 
   // The single 1 Hz panel tick (FR-29).
   setInterval(refreshStatus, 1000);
-
-  bridge.on('tunnel:state', (payload) => {
-    if (!payload) return;
-    state.socksPort = payload.socksPort || state.socksPort;
-  });
-  bridge.on('tab:open', ({ url }) => {
-    if (url) openUrl(url, { newTab: true });
-  });
-  bridge.on('settings:loaded', ({ settings }) => {
-    state.settings = settings;
-    renderSetupSummary();
-    if (!settings.completed) openWizard();
-  });
-  bridge.on('engine:failure', ({ message }) => {
-    toast(`The engine failed to start: ${message}`);
-  });
 }
 
 boot();

@@ -39,6 +39,9 @@ function resolveRoot() {
     path.join(process.resourcesPath || '', 'engine'),
     path.join(appPath, 'engine'),
     appPath,
+    // Development: `npm start` in app/ makes app/ the app path; the repo root
+    // (app_api/, .venv/) is its parent.
+    path.dirname(appPath),
     path.join(path.dirname(appPath), '..', '..'),
   ].filter(Boolean);
   for (const candidate of candidates) {

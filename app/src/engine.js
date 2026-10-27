@@ -124,6 +124,7 @@ class EngineManager {
     this.env = env;
     this.child = null;
     this.api = null;
+    this.starting = null;
     this.port = null;
     this.lastError = '';
     this.stdout = [];
@@ -139,8 +140,18 @@ class EngineManager {
    * Start the control API and wait until `/health` answers.
    * Idempotent: returns the existing client when it is already up.
    */
-  async ensureStarted({ port = 0, waitMs = READY_TIMEOUT_MS } = {}) {
+  async ensureStarted(options = {}) {
+    // Concurrent callers (main-process startup and the renderer's first IPC)
+    // share one start-up instead of racing a half-ready API.
+    if (this.starting) return this.starting;
     if (this.api && this.running) return this.api;
+    this.starting = this.start(options).finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  async start({ port = 0, waitMs = READY_TIMEOUT_MS } = {}) {
     const python = locatePython({
       resourcesPath: this.resourcesPath,
       rootDir: this.rootDir,

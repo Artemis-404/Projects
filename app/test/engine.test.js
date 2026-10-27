@@ -146,3 +146,36 @@ test('EngineManager is idempotent while running', async () => {
   assert.equal(spawned, 1);
   await manager.stop();
 });
+
+test('EngineManager shares one start-up between concurrent callers', async () => {
+  const root = tempRoot();
+  let spawned = 0;
+  let healthy = false;
+  setTimeout(() => {
+    healthy = true;
+  }, 300);
+  const manager = new EngineManager({
+    rootDir: root,
+    makeApi: ({ port }) => ({
+      baseUrl: `http://127.0.0.1:${port}`,
+      health: async () => {
+        if (!healthy) throw new Error('not ready');
+        return { ok: true };
+      },
+    }),
+    spawn: () => {
+      spawned += 1;
+      return fakeChild();
+    },
+    env: {},
+    log: () => {},
+  });
+  const [first, second] = await Promise.all([
+    manager.ensureStarted({ waitMs: 2000 }),
+    manager.ensureStarted({ waitMs: 2000 }),
+  ]);
+  assert.equal(spawned, 1);
+  assert.equal(first, second);
+  assert.ok(healthy, 'the second caller must not get a half-ready API');
+  await manager.stop();
+});
