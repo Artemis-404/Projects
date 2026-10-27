@@ -143,10 +143,28 @@ def write_torrc(
         f'ClientTransportPlugin uqab exec "{python_exe}" -u -m pt.client '
         f'--config "{config_path}"'
     )
-    bridge = f"Bridge uqab {bridge_host}:{bridge_pt_port}"
-    if fingerprint.strip():
-        bridge += f" {fingerprint.strip()}"
-    bridge += f" persona={persona}"
+    # Bridge lines from the Setup wizard (tor.bridges) win over the single
+    # bridge.* default. Each line is "host:port [fingerprint]", optionally with
+    # the "uqab" transport name in front; the persona is appended here.
+    configured = cfg.get("tor.bridges", []) or []  # type: ignore[attr-defined]
+    if isinstance(configured, str):
+        configured = [configured]
+    addresses = []
+    for raw in configured:
+        parts = str(raw).split()
+        if parts and parts[0].lower() == "bridge":
+            parts = parts[1:]
+        if parts and parts[0].lower() == "uqab":
+            parts = parts[1:]
+        parts = [part for part in parts if not part.startswith("persona=")]
+        if parts:
+            addresses.append(" ".join(parts[:2]))
+    if not addresses:
+        default = f"{bridge_host}:{bridge_pt_port}"
+        if fingerprint.strip():
+            default += f" {fingerprint.strip()}"
+        addresses.append(default)
+    bridges = [f"Bridge uqab {address} persona={persona}" for address in addresses]
 
     lines = [
         "## UQAB torrc - rewritten on every start (SDD 6.1)",
@@ -157,7 +175,7 @@ def write_torrc(
         f'Log notice file "{run_dir / "logs" / "tor.log"}"',
         "UseBridges 1",
         plugin,
-        bridge,
+        *bridges,
         # Nothing may leave outside the tunnel: no direct fallback, no exit use.
         "ClientUseIPv6 0",
         "SafeLogging 1",

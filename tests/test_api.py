@@ -340,3 +340,27 @@ def test_gui_mode_can_start_a_lab_session_with_overrides(cfg: Config, tmp_path: 
         api.handle("POST", "/stop", {}, origin=merged.get_str("app_api.allowed_origin"))
     finally:
         runner.shutdown()
+
+
+def test_torrc_uses_the_default_bridge_when_setup_has_none(cfg: Config, tmp_path: Path) -> None:
+    from app_api.tor_control import write_torrc
+
+    cfg = cfg.with_overrides(**{"tor.bridges": [], "bridge.host": "127.0.0.1", "bridge.pt_port": 9443})
+    text = write_torrc(cfg, tmp_path, "balanced", python_exe="python").read_text(encoding="utf-8")
+    bridges = [line for line in text.splitlines() if line.startswith("Bridge ")]
+    assert bridges == ["Bridge uqab 127.0.0.1:9443 persona=balanced"]
+
+
+def test_torrc_uses_the_bridges_entered_in_setup(cfg: Config, tmp_path: Path) -> None:
+    from app_api.tor_control import write_torrc
+
+    fp = "A" * 40
+    cfg = cfg.with_overrides(
+        **{"tor.bridges": [f"192.0.2.1:9443 {fp}", "uqab 198.51.100.7:443 persona=low"]}
+    )
+    text = write_torrc(cfg, tmp_path, "high", python_exe="python").read_text(encoding="utf-8")
+    bridges = [line for line in text.splitlines() if line.startswith("Bridge ")]
+    assert bridges == [
+        f"Bridge uqab 192.0.2.1:9443 {fp} persona=high",
+        "Bridge uqab 198.51.100.7:443 persona=high",
+    ]
