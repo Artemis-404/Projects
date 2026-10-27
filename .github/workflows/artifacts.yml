@@ -1,0 +1,83 @@
+name: artifacts
+
+# Runs the four gates, then builds the installers on the platform that can build
+# them natively: the NSIS setup on Windows, the AppImage + .deb on Linux.
+# The built files are uploaded as workflow artifacts (Actions -> run -> Artifacts).
+
+on:
+  push:
+    branches: [default, "finish/**"]
+  pull_request:
+    branches: [default]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            artifact: uqab-windows
+          - os: ubuntu-latest
+            platform: linux
+            artifact: uqab-linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the engine and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Certificates are gitignored. The build generates a fresh set; ca.key is
+      # never staged into the bundle (packaging/manifest.py refuses it).
+      - name: Generate lab certificates and icons
+        run: |
+          python -m tunnel.certs
+          python scripts/make_icon.py
+
+      - name: Gate - ruff
+        run: python -m ruff check .
+
+      - name: Gate - mypy
+        run: python -m mypy .
+
+      - name: Gate - pytest
+        run: python -m pytest
+
+      - name: Gate - node tests
+        working-directory: app
+        run: |
+          npm ci
+          node --test test/*.test.js
+
+      - name: Check the installer configuration
+        run: python packaging/build_installer.py --check
+
+      - name: Build the installer
+        run: python packaging/build_installer.py --${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            build/dist/*.exe
+            build/dist/*.AppImage
+            build/dist/*.deb
+            build/dist/build-report.json
+          if-no-files-found: error
