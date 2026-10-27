@@ -146,7 +146,9 @@ def test_missing_python_runtime_stops_the_build(
     staged_workspace: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = Path(__file__).resolve().parent.parent
-    monkeypatch.setattr(build_installer, "extract_python", lambda archive, bundle: Path("x"))
+    monkeypatch.setattr(
+        build_installer, "extract_python", lambda archive, bundle, platform="win": Path("x")
+    )
     result = build_installer.build(
         platforms=["win"],
         root=root,
@@ -164,3 +166,63 @@ def test_unknown_platform_is_rejected(staged_workspace: dict[str, Path]) -> None
     result = build_installer.build(platforms=["solaris"], run_packager=False)
     assert not result.ok
     assert any("unknown platform" in problem for problem in result.problems)
+
+
+def fake_linux_python_archive(path: Path) -> Path:
+    """python-build-standalone's Linux install_only layout."""
+    with tarfile.open(path, "w:gz") as tf:
+        for name, payload, mode in (
+            ("python/bin/python3", b"\x7fELF interpreter", 0o755),
+            ("python/lib/python3.11/os.py", b"# stdlib", 0o644),
+            ("python/lib/python3.11/test/test_os.py", b"trimmed", 0o644),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            info.mode = mode
+            tf.addfile(info, io.BytesIO(payload))
+    return path
+
+
+def test_linux_build_stages_the_linux_runtime(
+    staged_workspace: dict[str, Path], tmp_path: Path
+) -> None:
+    """--linux must bundle bin/python3, not the Windows python.exe."""
+    root = Path(__file__).resolve().parent.parent
+    archive = fake_linux_python_archive(
+        tmp_path / "cpython-3.11.18+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz"
+    )
+    result = build_installer.build(
+        platforms=["linux"],
+        root=root,
+        python_tarball=archive,
+        allow_download=False,
+        run_packager=False,
+        stage_only=True,
+    )
+    assert result.ok, result.problems
+    python = staged_workspace["stage"] / "python"
+    assert (python / "bin" / "python3").is_file()
+    assert not (python / "python.exe").exists()
+    assert not (python / "lib" / "python3.11" / "test").exists(), "the runtime is trimmed"
+    # A Windows archive is rejected for a Linux build: no interpreter where Linux looks.
+    windows = build_installer.build(
+        platforms=["linux"],
+        root=root,
+        python_tarball=staged_workspace["archive"],
+        allow_download=False,
+        run_packager=False,
+        stage_only=True,
+    )
+    assert not windows.ok
+    shutil.rmtree(staged_workspace["stage"], ignore_errors=True)
+
+
+def test_python_archive_picks_the_platform_triple(tmp_path: Path) -> None:
+    from packaging.build_portable import python_archive
+
+    win = tmp_path / "cpython-3.11.18+20261026-x86_64-pc-windows-msvc-install_only.tar.gz"
+    linux = tmp_path / "cpython-3.11.18+20261026-x86_64-unknown-linux-gnu-install_only.tar.gz"
+    for path in (win, linux):
+        path.write_bytes(b"x")
+    assert python_archive(tmp_path, allow_download=False, platform="win") == win
+    assert python_archive(tmp_path, allow_download=False, platform="linux") == linux

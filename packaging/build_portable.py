@@ -134,10 +134,19 @@ def electron_zip(version: str, cache: Path, *, allow_download: bool = True) -> P
     return download(url, target)
 
 
+# python-build-standalone target triple per installer platform.
+PYTHON_TRIPLES = {"win": "x86_64-pc-windows-msvc", "linux": "x86_64-unknown-linux-gnu"}
+
+
 def python_archive(
-    cache: Path, *, major_minor: str = DEFAULT_PYTHON_MAJOR_MINOR, allow_download: bool = True
+    cache: Path,
+    *,
+    major_minor: str = DEFAULT_PYTHON_MAJOR_MINOR,
+    allow_download: bool = True,
+    platform: str = "win",
 ) -> Path:
-    cached = sorted(cache.glob(f"cpython-{major_minor}.*-x86_64-pc-windows-msvc-install_only.tar.gz"))
+    triple = PYTHON_TRIPLES[platform]
+    cached = sorted(cache.glob(f"cpython-{major_minor}.*-{triple}-install_only.tar.gz"))
     if cached:
         return cached[-1]
     if not allow_download:
@@ -146,11 +155,13 @@ def python_archive(
     request = urllib.request.Request(PYTHON_RELEASES, headers={"User-Agent": "uqab-build/1.0"})
     with urllib.request.urlopen(request, timeout=60) as response:
         payload = json.load(response)
-    pattern = re.compile(rf"^cpython-{re.escape(major_minor)}\.\d+\+.*-x86_64-pc-windows-msvc-install_only\.tar\.gz$")
+    pattern = re.compile(
+        rf"^cpython-{re.escape(major_minor)}\.\d+\+.*-{re.escape(triple)}-install_only\.tar\.gz$"
+    )
     names = [asset["name"] for asset in payload.get("assets", []) if pattern.match(asset["name"])]
     if not names:
         raise RuntimeError(
-            f"no CPython {major_minor} Windows build in release {payload.get('tag_name')}"
+            f"no CPython {major_minor} {triple} build in release {payload.get('tag_name')}"
         )
     name = sorted(names)[-1]
     url = f"{GITHUB}/astral-sh/python-build-standalone/releases/download/{payload['tag_name']}/{name}"
@@ -252,7 +263,12 @@ def extract_electron(archive: Path, bundle: Path) -> Path:
     return target
 
 
-def extract_python(archive: Path, bundle: Path) -> Path:
+def python_executable(runtime: Path, platform: str = "win") -> Path:
+    """Where the interpreter lives in an install_only runtime."""
+    return runtime / "python.exe" if platform == "win" else runtime / "bin" / "python3"
+
+
+def extract_python(archive: Path, bundle: Path, platform: str = "win") -> Path:
     """Unpack CPython into ``resources/python`` and make it self-contained."""
     target = bundle / "resources" / "python"
     if target.exists():
@@ -270,14 +286,19 @@ def extract_python(archive: Path, bundle: Path) -> Path:
         for item in inner.iterdir():
             shutil.move(str(item), str(target / item.name))
         inner.rmdir()
-    exe = target / "python.exe"
+    exe = python_executable(target, platform)
     if not exe.is_file():
-        raise RuntimeError("the CPython archive did not contain python.exe")
-    # Trim what a GUI app never needs, to keep the artifact small.
-    for unwanted in ("test", "tests", "Doc", "doc", "lib2to3", "idlelib", "tkinter", "turtledemo"):
-        candidate = target / "Lib" / unwanted
-        if candidate.is_dir():
-            shutil.rmtree(candidate, ignore_errors=True)
+        raise RuntimeError(
+            f"the CPython archive did not contain {exe.relative_to(target).as_posix()}"
+        )
+    # Trim what a GUI app never needs, to keep the artifact small. The standard
+    # library is Lib/ on Windows and lib/pythonX.Y/ on Linux.
+    stdlib_dirs = [target / "Lib", *sorted((target / "lib").glob("python3.*"))]
+    for stdlib in stdlib_dirs:
+        for unwanted in ("test", "tests", "Doc", "doc", "lib2to3", "idlelib", "tkinter", "turtledemo"):
+            candidate = stdlib / unwanted
+            if candidate.is_dir():
+                shutil.rmtree(candidate, ignore_errors=True)
     for pycache in target.rglob("__pycache__"):
         shutil.rmtree(pycache, ignore_errors=True)
     return exe

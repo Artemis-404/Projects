@@ -57,6 +57,7 @@ from packaging.build_portable import (
     copy_engine,
     extract_python,
     python_archive,
+    python_executable,
 )
 from packaging.manifest import verify_layout
 
@@ -153,17 +154,23 @@ def stage_engine(root: Path = REPO) -> list[str]:
 
 
 def stage_python(
-    root: Path = REPO, *, archive: Path | None = None, allow_download: bool = True
+    root: Path = REPO,
+    *,
+    archive: Path | None = None,
+    allow_download: bool = True,
+    platform: str = "win",
 ) -> list[str]:
-    """Place a self-contained CPython at ``build/python`` for ``extraResources``."""
+    """Place the target platform's CPython at ``build/python`` for ``extraResources``."""
     if PYTHON_STAGE.exists():
         shutil.rmtree(PYTHON_STAGE)
-    tarball = archive or python_archive(root / "build" / "cache", allow_download=allow_download)
+    tarball = archive or python_archive(
+        root / "build" / "cache", allow_download=allow_download, platform=platform
+    )
     fake_bundle = STAGE / "python-stage"
     if fake_bundle.exists():
         shutil.rmtree(fake_bundle)
     fake_bundle.mkdir(parents=True, exist_ok=True)
-    extract_python(tarball, fake_bundle)
+    extract_python(tarball, fake_bundle, platform)
     extracted = fake_bundle / "resources" / "python"
     if not extracted.is_dir():
         shutil.rmtree(fake_bundle, ignore_errors=True)
@@ -175,7 +182,7 @@ def stage_python(
     return [str(PYTHON_STAGE)]
 
 
-def verify_stage() -> list[str]:
+def verify_stage(platform: str = "win") -> list[str]:
     problems: list[str] = []
     if not (ENGINE_STAGE / "app_api" / "server.py").is_file():
         problems.append("build/engine is missing app_api/server.py")
@@ -184,8 +191,8 @@ def verify_stage() -> list[str]:
             problems.append(f"build/engine is missing {package}/")
     if not (ENGINE_STAGE / "tunnel" / "certs" / "client.crt").is_file():
         problems.append("build/engine is missing the lab certificates")
-    if not (PYTHON_STAGE / "python.exe").is_file() and not (PYTHON_STAGE / "python").is_file():
-        problems.append("build/python does not contain an interpreter")
+    if not python_executable(PYTHON_STAGE, platform).is_file():
+        problems.append(f"build/python does not contain the {platform} interpreter")
     if not (RESOURCES_STAGE / "icon.png").is_file():
         problems.append("build/resources/icon.png is missing")
     problems.extend(verify_layout(REPO / "build" / "UQAB") if (REPO / "build" / "UQAB").is_dir() else [])
@@ -265,25 +272,35 @@ def build(
 
     try:
         stage_engine(root)
-        stage_python(root, archive=python_tarball, allow_download=allow_download)
     except (OSError, RuntimeError) as exc:
         result.problems.append(f"staging failed: {exc}")
         return result
-    result.staged = True
-    result.problems.extend(verify_stage())
-    if result.problems or stage_only or not run_packager:
-        result.elapsed_s = time.time() - started
-        if not run_packager and not result.problems:
-            result.notes.append("staged only: run without --no-run to build the installers")
-        return result
 
-    ok, output = run_builder(platforms)
-    result.built = ok
-    if not ok:
-        tail = "\n".join(output.strip().splitlines()[-15:])
-        result.problems.append(f"electron-builder failed:\n{tail}")
-        result.elapsed_s = time.time() - started
-        return result
+    # One platform at a time: build/python holds the runtime for exactly one
+    # target (python.exe for Windows, bin/python3 for Linux).
+    for platform in platforms:
+        try:
+            stage_python(
+                root, archive=python_tarball, allow_download=allow_download, platform=platform
+            )
+        except (OSError, RuntimeError) as exc:
+            result.problems.append(f"staging failed: {exc}")
+            return result
+        result.staged = True
+        result.problems.extend(verify_stage(platform))
+        if result.problems or stage_only or not run_packager:
+            result.elapsed_s = time.time() - started
+            if not run_packager and not result.problems:
+                result.notes.append("staged only: run without --no-run to build the installers")
+            return result
+
+        ok, output = run_builder([platform])
+        result.built = ok
+        if not ok:
+            tail = "\n".join(output.strip().splitlines()[-15:])
+            result.problems.append(f"electron-builder failed ({platform}):\n{tail}")
+            result.elapsed_s = time.time() - started
+            return result
 
     result.artifacts = collect_artifacts()
     if not result.artifacts:
