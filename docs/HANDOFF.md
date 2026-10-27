@@ -101,6 +101,6 @@ needed; nothing else in the build path needs the network.
 | `app_api/` | control API the app talks to (`/status`, `/start`, `/tor`, `/setup`, …) |
 | `lab/` | mock Tor, mock ORPort, demo origin — the Tor-free fallback |
 | `packaging/` | portable zip and installer builders + electron-builder config |
-| `docs/DESIGN_DECISIONS.md` | D1–D21, including why the tunnel is persistent (D21) |
+| `docs/DESIGN_DECISIONS.md` | D1–D24, including why the tunnel is persistent (D21) and why there is no WSL (D22) |
 | `docs/LAB_MODE.md` | what the lab proves and what it does not |
 | `docs/VERIFICATION.md` | exactly what was run here, and what could not be |

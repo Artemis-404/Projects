@@ -118,7 +118,7 @@ the dashboard routes and the packaging layout.
 ## Documentation
 
 * `docs/DESIGN_DECISIONS.md` — every decision that deviates from, or fills a gap
-  in, the SDD (D1–D21, including the persistent multiplexed tunnel).
+  in, the SDD (D1–D24, including the persistent multiplexed tunnel and the no-WSL decision).
 * `docs/LAB_MODE.md` — exactly what lab simulation does and does not prove.
 * `docs/REPORT.md` — the report skeleton with the tables the experiment produces.
 * `docs/PACKAGING.md` — installers (Windows `.exe`, Linux AppImage/deb), portable

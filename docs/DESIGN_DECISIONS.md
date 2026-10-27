@@ -227,3 +227,43 @@ Consequences that are deliberately accepted:
 that overtakes its own data truncates the response (this was caught by the lab
 test, which now asserts a full 4117-byte page arrives through the shaped path).
 
+## D22 — No WSL2 or virtual machine: the engine runs natively
+
+UC-7 and NFR-14 in the SRS describe a client engine that runs in WSL2 (Ubuntu
+24.04) behind a Windows app. UQAB does not use WSL2 or any VM. The engine is
+standard-library Python, so the installers bundle a self-contained CPython
+(`packaging/build_installer.py`) and the app starts it directly as a child process
+(`app/src/engine.js`). On Windows nothing else has to be installed or enabled: no
+WSL feature, no Linux distribution, no virtualisation, no admin rights.
+
+The same engine still runs natively on Ubuntu (AppImage / `.deb`, and the CI job
+on `ubuntu-latest`), so the Linux half of NFR-14 is kept; only "WSL2 on Windows"
+is dropped. UC-7's step "app checks the client engine in WSL2" becomes "app starts
+the bundled engine and waits for `/health`". The report should state this as a
+deliberate SRS change: it removes the hardest install step for end users and
+removes a second operating system from the trusted path.
+
+## D23 — Servers close without waiting for live connections (Python 3.12+)
+
+Since Python 3.12.1, `asyncio.Server.wait_closed()` — and therefore
+`serve_forever()` when cancelled and `async with server` — waits until every
+accepted connection has ended. A PT server with a live tunnel, or a PT client with
+open Tor streams, could therefore never finish shutting down; on Windows the
+multiplexing test hung for good. The listeners now wait on a plain future instead
+of `serve_forever()`, and `security.guard.close_server()` aborts live connections
+before a *bounded* `wait_closed()`. The SRS targets Python 3.12+ (NFR-14), so this
+is a correctness fix for the supported runtime, not a test workaround.
+
+## D24 — The slot clock uses a high-resolution timer on Windows
+
+NFR-03 (p95 slot error ≤ 5 ms) failed on Windows at about 19 ms. Two causes: the
+event-loop clock there (`time.monotonic()`, GetTickCount64 before Python 3.13)
+moves in ~15.6 ms steps, and asyncio timeouts are quantised to the same system
+timer. The slot clock now schedules and measures with `time.perf_counter()` and,
+on Windows only, waits in `cover.scheduler.PreciseTimer`: one daemon thread that
+sleeps with `time.sleep` (a high-resolution waitable timer since Python 3.11) in
+2 ms slices and wakes each waiter on its own loop. Measured on the Windows 11
+development machine: p95 1.3–2.3 ms at 25 ms and 100 ms slots, against 15–19 ms
+before. `timeBeginPeriod(1)` was tried first and rejected: Windows 11 honoured it
+in only one of six runs for a windowless process. Logged slot times stay on the
+`time.monotonic()` epoch so they still line up with the experiment's ground truth.
