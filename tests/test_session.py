@@ -370,7 +370,7 @@ def test_client_retries_and_recovers_within_retry_window(
             await wait_until(lambda: server2.server is not None)
 
             caller2 = await asyncio.wait_for(
-                SocksCaller.connect(cport, "persona=high"), limit_s=8
+                SocksCaller.connect(cport, "persona=high"), timeout=8
             )
             elapsed = loop.time() - started
             await caller2.send(b"down")
