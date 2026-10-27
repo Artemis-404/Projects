@@ -11,7 +11,7 @@ itself.
 git clone <this-repo> uqab && cd uqab
 python -m venv .venv
 # Windows: .venv\Scripts\activate        Linux/macOS: . .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"   # engine + pytest/ruff/mypy
 
 python -m tunnel.certs        # mutual-TLS certificates (gitignored, generated here)
 python scripts/make_icon.py   # icon.png + icon.ico (idempotent)

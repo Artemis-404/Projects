@@ -55,7 +55,7 @@ See `docs/USER_GUIDE.md` and `docs/PACKAGING.md`.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e .                                  # stdlib only; no runtime deps
+pip install -e ".[dev]"                           # engine (stdlib only) + test tools
 python -m tunnel.certs                            # one-off mutual-TLS certificates
 python scripts/make_icon.py                       # icon.png + icon.ico
 ```

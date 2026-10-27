@@ -4,6 +4,16 @@ version = "1.0.0"
 description = "UQAB - persona-shaped Tor pluggable transport and browser"
 requires-python = ">=3.11"
 
+# The engine itself is standard-library only. These are for development and for
+# reproducing the verification gates (`pip install -e ".[dev]"`).
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -70,6 +70,7 @@ report is the output of that command; the numbers are not typed by hand.
 ## 4. Reproducing this page
 
 ```bash
+pip install -e ".[dev]"
 python -m ruff check .
 python -m mypy .
 python -m pytest -q
