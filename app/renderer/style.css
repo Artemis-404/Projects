@@ -202,6 +202,8 @@ button, input, select { font: inherit; color: inherit; }
   justify-content: center;
   padding: 40px;
   z-index: 1;
+  /* Opaque: the blank tab under the overlay is white, and the text is light. */
+  background: var(--bg);
 }
 .blocked[hidden] { display: none; }
 .blocked-inner { max-width: 460px; text-align: center; }

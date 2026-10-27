@@ -43,9 +43,20 @@ fill it in.
    * **Use my Tor** — press *Browse* and pick your `tor` binary (`tor.exe` on
      Windows, usually inside the Tor Browser folder).
    * **Lab simulation** — no Tor at all; a demo stack runs on your machine. It is
-     labelled *Lab simulation* in the app at all times.
+     labelled *Lab simulation* in the app at all times. It only serves the built-in
+     demo sites (`http://demo.uqab/` and its pages); real websites are refused on
+     purpose, so the lab can never act as an unprotected proxy.
    * Optionally set the SOCKS port (default 9150) and the default persona, and add
-     bridges under *Advanced* if your provider gave you some.
+     bridges under *Advanced*.
+
+   > **Tor needs a UQAB bridge.** UQAB is a pluggable transport: real-Tor mode
+   > connects to a bridge that runs the UQAB server, not to an ordinary Tor
+   > bridge. Paste the bridge line you were given (`host:port FINGERPRINT`) under
+   > *Advanced: bridges*. Without one, Tor cannot bootstrap; use the lab instead.
+
+   ![Setup, step 1: Automatic preselected, Tor not found, lab simulation will be used](images/setup-wizard-step1.png)
+
+   ![Setup, step 3: summary before Finish](images/setup-wizard-summary.png)
 2. **Personas and privacy.** Clearnet learning is **off** unless you opt in later;
    the panel shows its current state and lets you withdraw (which deletes the
    learned profile). You can also tick *Start UQAB when I sign in*.
@@ -65,8 +76,25 @@ right-hand panel.
 * Browse. Every tab goes through UQAB's own SOCKS5 listener with remote DNS, and
   WebRTC cannot send UDP outside the tunnel.
 * The panel updates once a second: real versus cover traffic, overhead, the
-  persona's current period and the session uptime.
-* Press **Stop** to end the session. Traffic stops with the tunnel.
+  persona's current period and the session uptime. Cover traffic starts as soon
+  as the session is *Protected*, before you open any page, and keeps running
+  while you read: that is what hides when you are active.
+* Press **Stop** to end the session. Traffic stops with the tunnel. A page that
+  was already loaded stays on screen, but nothing new loads (links, reloads and
+  the address bar are all refused) until you press Start again.
+
+Before Start, the address bar refuses to load anything:
+
+![Before Start: the tab is gated and the address bar refuses to load](images/gate-before-start.png)
+
+A running lab session browsing the demo origin; note the *Lab simulation* badge
+and cover traffic far above real traffic:
+
+![Running session: Protected, Lab simulation badge, real vs cover bytes and overhead](images/running-panel.png)
+
+After Stop the panel returns to *Disconnected* and new loads are refused:
+
+![After Stop: Disconnected; the old page is visible but nothing new loads](images/after-stop.png)
 
 Shortcuts: `Ctrl+T` new tab, `Ctrl+W` close tab, `Ctrl+L` address bar, `Ctrl+H`
 history, `Ctrl+Tab` next tab.
