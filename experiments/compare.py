@@ -200,10 +200,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="use a real Tor SOCKS port instead of the lab stack",
     )
+    parser.add_argument(
+        "--driver",
+        choices=("auto", "playwright", "http"),
+        default=None,
+        help="page loader: headless Chromium (playwright), the SOCKS HTTP client, or auto",
+    )
     parser.add_argument("--json", action="store_true", help="print the full JSON")
     args = parser.parse_args(argv)
 
     cfg = load_config(Path(args.config)) if args.config else load_config()
+    if args.driver:
+        cfg = cfg.with_overrides(**{"experiments.driver": args.driver})
     names = tuple(part.strip().upper() for part in args.configurations.split(",") if part.strip())
     result = run_comparison(
         cfg=cfg,

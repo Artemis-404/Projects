@@ -81,6 +81,12 @@ python -m experiments.compare --loads 30      # A = plain, B = constant, C = per
 python -m experiments.report                  # markdown report + CSV appendix
 ```
 
+The timeline is browsed by headless Chromium when Playwright is installed
+(`pip install -e ".[browser]"`, then `python -m playwright install chromium`),
+otherwise by a small SOCKS5 HTTP client; `--driver playwright|http|auto` forces
+one, and every run records which driver it used (FR-20). Chromium is pinned to
+the SOCKS port with remote DNS, no QUIC and no non-proxied WebRTC.
+
 ## What each module does
 
 | module | responsibility |

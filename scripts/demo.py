@@ -83,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep", action="store_true", help="keep the demo directory")
     parser.add_argument("--out", default="docs/report/sample-results.md")
     parser.add_argument("--no-dashboard", action="store_true")
+    parser.add_argument(
+        "--driver",
+        choices=("auto", "playwright", "http"),
+        default=None,
+        help="page loader (default: experiments.driver from config.yaml)",
+    )
     args = parser.parse_args(argv)
 
     started = time.time()
@@ -90,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     ensure(CertPaths.from_config(base))
     run_dir = Path(tempfile.mkdtemp(prefix="uqab-demo-"))
     cfg = demo_config(base, run_dir)
+    if args.driver:
+        cfg = cfg.with_overrides(**{"experiments.driver": args.driver})
 
     from experiments.run import timeline_from_config
 
@@ -119,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"[demo] {run.configuration}: {run.summary['ok']}/{run.summary['loads']} loads, "
             f"{run.windows} windows ({run.active_windows} active / {run.idle_windows} idle), "
-            f"p50 {run.summary['p50_ms']:.0f} ms, {state}"
+            f"p50 {run.summary['p50_ms']:.0f} ms, {state}; {run.driver}"
         )
 
     out = Path(args.out)

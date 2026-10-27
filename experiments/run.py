@@ -25,6 +25,7 @@ from analysis.features import (
 )
 from analysis.pcap import read_pcap
 from config import Config, load_config
+from experiments.browser import replay_with_driver
 from experiments.capture import (
     capture_from_logs,
     capture_from_plain_log,
@@ -62,6 +63,7 @@ class RunResult:
     artifacts: dict[str, str] = field(default_factory=dict)
     slot_timing: dict[str, float] | None = None
     error: str = ""
+    driver: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +79,7 @@ class RunResult:
             "duration_s": round(self.duration_s, 3),
             "artifacts": self.artifacts,
             "error": self.error,
+            "driver": self.driver,
         }
 
     def write(self, path: Path | str) -> Path:
@@ -155,18 +158,23 @@ def _drive_lab(
     jitter_s: float = 0.0,
     seed: int = 7,
     requests_per_load: int = 1,
-) -> tuple[Any, list[LoadResult], list[dict[str, Any]], float, float]:
-    """Start the lab stack, replay the timeline, stop the stack."""
+    driver: str = "http",
+) -> tuple[Any, list[LoadResult], list[dict[str, Any]], float, float, str]:
+    """Start the lab stack, replay the timeline through ``driver``, stop the stack."""
 
-    async def driver() -> tuple[Any, list[LoadResult], list[dict[str, Any]], float, float]:
+    async def drive() -> tuple[Any, list[LoadResult], list[dict[str, Any]], float, float, str]:
         from lab.stack import LabStack
 
         stack = LabStack(cfg, persona=persona, socks_port=socks_port)
         await stack.start()
         try:
-            outcome = await asyncio.to_thread(
+            # The browser lives in the replay thread (Playwright's sync API is
+            # bound to the thread that started it).
+            outcome, note = await asyncio.to_thread(
+                replay_with_driver,
                 replay,
                 timeline,
+                driver=driver,
                 proxy_host="127.0.0.1",
                 proxy_port=stack.socks_port,
                 jitter_s=jitter_s,
@@ -181,9 +189,10 @@ def _drive_lab(
             outcome.phases,
             outcome.started_mono,
             outcome.started_wall,
+            note,
         )
 
-    return asyncio.run(driver())
+    return asyncio.run(drive())
 
 
 def _windows_from_logs(
@@ -265,6 +274,8 @@ def run_experiment(
     jitter_s = float(cfg.get_int("experiments.jitter_s", 400) or 0) / 1000.0
     seed = int(cfg.get_int("analysis.random_seed", 7) if seed is None else seed)
     requests_per_load = max(1, cfg.get_int("experiments.requests_per_load", 24))
+    driver = cfg.get_str("experiments.driver", "auto") or "auto"
+    driver_note = ""
     logs = cfg.path("paths.run") / "logs"
     plain_run = use_lab and default_persona is None and persona is None
     offsets = {
@@ -279,7 +290,7 @@ def run_experiment(
     stack = None
     try:
         if use_lab:
-            stack, loads, phases, t0, started_wall = _drive_lab(
+            stack, loads, phases, t0, started_wall, driver_note = _drive_lab(
                 cfg,
                 None if plain_run else persona_id,
                 timeline,
@@ -288,13 +299,16 @@ def run_experiment(
                 jitter_s=jitter_s,
                 seed=seed,
                 requests_per_load=requests_per_load,
+                driver=driver,
             )
         else:
             port = socks_port or int(cfg.get_int("tor.socks_port", 9150))
             if not port_open(socks_host, port, wait_s=30.0):
                 raise ExperimentError(f"no SOCKS proxy on {socks_host}:{port}; is Tor running?")
-            outcome = replay(
+            outcome, driver_note = replay_with_driver(
+                replay,
                 timeline,
+                driver=driver,
                 proxy_host=socks_host,
                 proxy_port=port,
                 jitter_s=jitter_s,
@@ -312,6 +326,7 @@ def run_experiment(
             summary=summarise([]),
             duration_s=time.time() - started,
             error=f"{type(exc).__name__}: {exc}",
+            driver=driver_note,
         )
         result.write(run_dir / "summary.json")
         return result
@@ -372,6 +387,7 @@ def run_experiment(
         evaluation=evaluation,
         duration_s=duration,
         slot_timing=slot_timing,
+        driver=driver_note,
         artifacts={
             "dir": str(run_dir),
             "ground_truth": str(run_dir / "ground-truth.csv"),
@@ -407,7 +423,7 @@ def run_experiment(
                 idle_bps=(
                     round(float(idle_window_bytes) / idle_window_s, 1) if idle_window_s else 0.0
                 ),
-                notes=CONFIGURATION_NOTES[letter],
+                notes=f"{CONFIGURATION_NOTES[letter]}; {driver_note}" if driver_note else CONFIGURATION_NOTES[letter],
             ),
             page_loads=[
                 {
